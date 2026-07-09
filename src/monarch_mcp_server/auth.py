@@ -22,6 +22,14 @@ _UPGRADE_HINT = (
     "`python login_setup.py` from the repo to authenticate via terminal."
 )
 
+_CLIENT_NO_ELICITATION = (
+    "Your MCP client does not support the elicitation protocol "
+    "(it returned -32601 Method not found). "
+    "Use 'monarch_login_with_token' instead: open monarch.com in your browser, "
+    "go to DevTools → Application → Local Storage → https://app.monarch.com, "
+    "copy the 'token' value, and paste it when prompted."
+)
+
 
 def _elicit_supported(ctx: Context) -> bool:
     return hasattr(ctx, "elicit")
@@ -40,7 +48,7 @@ class TokenForm(BaseModel):
     token: str = Field(
         description=(
             "Monarch Money session token. Grab it from browser DevTools → "
-            "Application → Local Storage for app.monarchmoney.com, key 'token'."
+            "Application → Local Storage for app.monarch.com, key 'token'."
         ),
     )
 
@@ -48,7 +56,12 @@ class TokenForm(BaseModel):
 async def login_interactive(ctx: Context) -> str:
     if not _elicit_supported(ctx):
         return _UPGRADE_HINT
-    form_result = await ctx.elicit(message="Sign in to Monarch Money.", schema=LoginForm)
+    try:
+        form_result = await ctx.elicit(message="Sign in to Monarch Money.", schema=LoginForm)
+    except Exception as e:
+        if "Method not found" in str(e) or "-32601" in str(e):
+            return _CLIENT_NO_ELICITATION
+        raise
     if form_result.action != "accept":
         return "Login cancelled."
     form = form_result.data
@@ -62,9 +75,14 @@ async def login_interactive(ctx: Context) -> str:
             save_session=False,
         )
     except RequireMFAException:
-        mfa_result = await ctx.elicit(
-            message="Enter your Monarch Money MFA code.", schema=MFAForm
-        )
+        try:
+            mfa_result = await ctx.elicit(
+                message="Enter your Monarch Money MFA code.", schema=MFAForm
+            )
+        except Exception as e:
+            if "Method not found" in str(e) or "-32601" in str(e):
+                return _CLIENT_NO_ELICITATION
+            raise
         if mfa_result.action != "accept":
             return "Login cancelled."
         await mm.multi_factor_authenticate(
@@ -78,9 +96,14 @@ async def login_interactive(ctx: Context) -> str:
 async def login_with_token_interactive(ctx: Context) -> str:
     if not _elicit_supported(ctx):
         return _UPGRADE_HINT
-    form_result = await ctx.elicit(
-        message="Paste your Monarch Money session token.", schema=TokenForm
-    )
+    try:
+        form_result = await ctx.elicit(
+            message="Paste your Monarch Money session token.", schema=TokenForm
+        )
+    except Exception as e:
+        if "Method not found" in str(e) or "-32601" in str(e):
+            return _CLIENT_NO_ELICITATION
+        raise
     if form_result.action != "accept":
         return "Login cancelled."
 
