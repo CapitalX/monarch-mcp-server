@@ -152,9 +152,35 @@ Long-lived sessions, supports SSO accounts, and sidesteps Cloudflare CAPTCHA gat
 2. Open DevTools (F12) → Network tab.
 3. Click any request whose Name starts with `graphql` (or any request to `api.monarch.com`).
 4. Scroll to Request Headers, find the `cookie:` header, and copy the full value.
-5. Paste it into the prompt.
+5. Save it to the cookie file for your platform (recommended), then re-run the script — it reads the file automatically:
 
-The script verifies the cookies against the live API before saving them to your system keyring.
+   **macOS / Linux** — `~/.config/monarch-mcp/cookie.txt` (respects `$XDG_CONFIG_HOME`):
+
+   ```bash
+   mkdir -p ~/.config/monarch-mcp
+   # paste the cookie value into the file with your editor, then:
+   chmod 600 ~/.config/monarch-mcp/cookie.txt
+   ```
+
+   **Windows** — `%APPDATA%\monarch-mcp\cookie.txt`:
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$env:APPDATA\monarch-mcp" | Out-Null
+   notepad "$env:APPDATA\monarch-mcp\cookie.txt"   # paste the cookie value, save, close
+   ```
+
+   Files under your user profile are already ACL-restricted to your account on Windows; no `chmod` equivalent is needed for typical single-user machines.
+
+   To use a different location on any platform, set the `MONARCH_MCP_COOKIE_FILE` environment variable to the full path.
+
+   Alternatively, paste the value at the interactive prompt — but note that
+   POSIX terminals silently truncate pasted input at the canonical-mode
+   buffer limit (`MAX_CANON`, 1024 bytes on macOS/Linux), and real Monarch
+   cookie headers are usually longer than that, so the prompt path fails
+   with a confusing auth error for most users. The cookie file has no
+   length limit and survives repo updates.
+
+The script verifies the cookies against the live API before saving them to your system keyring. The cookie file is only read at setup time; the running MCP server uses the keyring session.
 
 #### Option 2: Email and password
 
