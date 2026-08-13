@@ -3,7 +3,14 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+<<<<<<< HEAD
 from monarch_mcp_server.tools.goals import get_goals, update_savings_goal
+=======
+from monarch_mcp_server.tools.goals import (
+    get_goals, update_savings_goal, get_goal_contributions,
+    set_goal_contribution,
+)
+>>>>>>> feat/get-goals
 
 
 def _goal(**overrides):
@@ -210,3 +217,79 @@ class TestUpdateSavingsGoal:
 
         sent = client.gql_call.call_args.kwargs["variables"]["input"]
         assert sent == {"id": "sg_1", "isSinkingFund": False}
+<<<<<<< HEAD
+=======
+
+
+class TestGoalContributions:
+    """Tests for goal contribution tools."""
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_get_contributions_breaks_down_by_account(self, mock_get_client):
+        c = AsyncMock()
+        c.gql_call.return_value = {"savingsGoal": {
+            "id": "sg_1", "name": "Rainy Day Fund",
+            "monthlyBudgetAmounts": [{
+                "month": "2026-08-01", "totalPlannedAmount": 1143.0,
+                "totalActualAmount": 0.0, "totalRemainingAmount": 1143.0,
+                "accountBreakdown": [
+                    {"account": {"id": "a1", "displayName": "Savings"},
+                     "plannedAmount": 143.0, "actualAmount": 0.0,
+                     "remainingAmount": 143.0},
+                ],
+            }],
+        }}
+        mock_get_client.return_value = c
+
+        data = json.loads(await get_goal_contributions("sg_1", month="2026-08"))
+
+        assert data["months"][0]["accounts"][0]["planned"] == 143.0
+        sent = c.gql_call.call_args.kwargs["variables"]
+        assert sent["startMonth"] == "2026-08-01"
+        assert sent["endMonth"] == "2026-08-31"
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_set_contribution_sends_only_that_account(self, mock_get_client):
+        """Unmentioned accounts are preserved by Monarch, so only one is sent.
+
+        Resending the whole allocation risks duplicate-account errors and would
+        overwrite concurrent edits to other accounts.
+        """
+        c = AsyncMock()
+        c.gql_call.return_value = {"updateSavingsGoal": {
+            "savingsGoal": {"id": "sg_1"}, "errors": None}}
+        mock_get_client.return_value = c
+
+        data = json.loads(await set_goal_contribution("sg_1", "a1", 175.0))
+
+        assert data["success"] is True
+        sent = c.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent == {"id": "sg_1",
+                        "accountBudgetAmounts": [{"accountId": "a1", "amount": 175.0}]}
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_set_contribution_zero_is_sent(self, mock_get_client):
+        """0 removes the contribution and must not be dropped as falsy."""
+        c = AsyncMock()
+        c.gql_call.return_value = {"updateSavingsGoal": {
+            "savingsGoal": {"id": "sg_1"}, "errors": None}}
+        mock_get_client.return_value = c
+
+        await set_goal_contribution("sg_1", "a1", 0.0)
+
+        sent = c.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent["accountBudgetAmounts"][0]["amount"] == 0.0
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_set_contribution_reports_errors(self, mock_get_client):
+        c = AsyncMock()
+        c.gql_call.return_value = {"updateSavingsGoal": {
+            "savingsGoal": None,
+            "errors": {"message": "Duplicate account_id", "fieldErrors": None}}}
+        mock_get_client.return_value = c
+
+        data = json.loads(await set_goal_contribution("sg_1", "a1", 1.0))
+
+        assert data["success"] is False
+        assert "Duplicate" in data["errors"]["message"]
+>>>>>>> feat/get-goals

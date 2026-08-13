@@ -13,7 +13,10 @@ from monarch_mcp_server.tools import (  # noqa: F401
     budgets,
     financial,
     goals,
+<<<<<<< HEAD
     sync_health,
     debt,
+=======
+>>>>>>> feat/get-goals
     merchants,
 )

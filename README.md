@@ -35,6 +35,7 @@ Every item below was verified against the live Monarch API, not just against moc
 | `get_account_sync_health` | A broken bank connection fails silently: Monarch keeps serving stale balances and stops importing. Reports re-auth needs, provider disconnects and staleness. |
 | `get_debt_paydown` | Debt paydown is **not** a goal — the legacy debt goal was dropped in the migration and replaced by `debtPaydownPlan`. Flags accounts excluded from the plan, since excluding a high-APR card flatters the debt-free date. |
 | `get_goals` / `update_savings_goal` | Read goals and set target amount, date, name, priority, type and sinking-fund flag. |
+| `get_goal_contributions` / `set_goal_contribution` | Contributions are budgeted per funding account, not per goal. Setting one account leaves the others untouched. |
 | `monarch_whoami` | Reports the signed-in user and **plan-gated capabilities**, probed against the live schema rather than guessed from entitlement names. |
 | `audit_transaction_rules` | Flags rules that never fire, do nothing, or are overwritten by a later rule. |
 
@@ -46,7 +47,7 @@ Every item below was verified against the live Monarch API, not just against moc
 
 Documented so nobody re-derives them:
 
-- **A goal's monthly contribution cannot be set through the API.** Every other field on `UpdateSavingsGoalInput` persists — `name`, `targetAmount`, `targetDate`, `priority`, `type`, `isSinkingFund`, and the image fields. `plannedMonthlyContribution` is the sole exception: it is accepted and returns success, but does not persist. It mirrors the month's budget entry (`currentMonthPlannedContributionAmount`), not a goal field, and the budget-item mutation rejects both `goalId` and `savingsGoalId`. Set it in the app.
+- **`plannedMonthlyContribution` is a read-only rollup.** It is accepted on `UpdateSavingsGoalInput` and returns success, but never persists. Contributions are budgeted **per funding account** via `accountBudgetAmounts` — use `set_goal_contribution`. The rollup can also disagree with the month total (1000.0 vs 1143.0 on a real account), so trust the per-account figures.
 - **Introspection is disabled** for non-admin users, and unknown-field errors are masked as a generic `"Something went wrong"`. Schema discovery is empirical. Note that object-typed fields need a subselection — `field { id }`, not `field` — or a valid field reads as missing.
 - **`SplitAmountType` is an enum.** Monarch accepts a lowercase value on write but then cannot serialise it back, breaking every subsequent `transactionRules` read until the offending rule is deleted.
 - **Parts of the schema are plan-gated.** Business entities are absent entirely on lower tiers — use `monarch_whoami` rather than assuming.

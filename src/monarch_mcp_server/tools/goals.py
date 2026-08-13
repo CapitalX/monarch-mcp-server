@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 import logging
+=======
+import calendar
+import logging
+from datetime import date
+>>>>>>> feat/get-goals
 from typing import Any, Dict, Optional
 
 from gql import gql
@@ -166,6 +172,7 @@ async def update_savings_goal(
     omitted fields are preserved, verified against the live API. Pass only what
     you want to change.
 
+<<<<<<< HEAD
     NOTE: the monthly contribution cannot be changed here. UpdateSavingsGoalInput
     accepts `plannedMonthlyContribution` and reports success, but the value does
     not persist -- it mirrors the goal's budget entry for the month
@@ -173,6 +180,12 @@ async def update_savings_goal(
     reachable mutation sets it: the budget-item mutation rejects both `goalId`
     and `savingsGoalId`. Contribution targets have to be set in the Monarch app.
     The argument is deliberately absent rather than accepted-and-ignored.
+=======
+    NOTE: the monthly contribution is not set here. `plannedMonthlyContribution`
+    is a read-only rollup -- the input accepts it and reports success, but the
+    value never persists. Contributions are budgeted per funding account; use
+    `set_goal_contribution`.
+>>>>>>> feat/get-goals
 
     Args:
         goal_id: Goal to update. Use get_goals -- and note these are
@@ -254,3 +267,155 @@ async def update_savings_goal(
         })
     except Exception as e:
         return json_error("update_savings_goal", e)
+<<<<<<< HEAD
+=======
+
+
+GOAL_CONTRIBUTIONS_QUERY = gql("""
+query GetSavingsGoalContributions($id: ID!, $startMonth: Date!, $endMonth: Date!) {
+  savingsGoal(id: $id) {
+    id
+    name
+    monthlyBudgetAmounts(startMonth: $startMonth, endMonth: $endMonth) {
+      month
+      totalPlannedAmount
+      totalActualAmount
+      totalRemainingAmount
+      accountBreakdown {
+        account {
+          id
+          displayName
+          __typename
+        }
+        plannedAmount
+        actualAmount
+        remainingAmount
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+""")
+
+
+def _month_bounds(month: Optional[str]) -> tuple:
+    """(first, last) day of *month* ("YYYY-MM-DD" or "YYYY-MM"), default current."""
+    if month:
+        parts = month.split("-")
+        year, mon = int(parts[0]), int(parts[1])
+    else:
+        today = date.today()
+        year, mon = today.year, today.month
+    last = calendar.monthrange(year, mon)[1]
+    return f"{year:04d}-{mon:02d}-01", f"{year:04d}-{mon:02d}-{last:02d}"
+
+
+@mcp.tool()
+async def get_goal_contributions(goal_id: str, month: Optional[str] = None) -> str:
+    """
+    Show a goal's budgeted contributions, broken down by funding account.
+
+    A goal's contribution is not one number -- it is budgeted per account, and
+    the goal-level `plannedMonthlyContribution` is a rollup. Use this to see the
+    per-account amounts and to get the `account_id` values that
+    `set_goal_contribution` needs.
+
+    Args:
+        goal_id: A `savingsGoals` id (see get_goals).
+        month: "YYYY-MM" or "YYYY-MM-DD". Defaults to the current month.
+
+    Returns:
+        JSON with the month's planned/actual totals and the per-account split.
+    """
+    try:
+        start, end = _month_bounds(month)
+        client = await get_monarch_client()
+        result = await client.gql_call(
+            operation="GetSavingsGoalContributions",
+            graphql_query=GOAL_CONTRIBUTIONS_QUERY,
+            variables={"id": goal_id, "startMonth": start, "endMonth": end},
+        )
+        goal = result.get("savingsGoal") or {}
+        months = []
+        for m in goal.get("monthlyBudgetAmounts") or []:
+            months.append({
+                "month": m.get("month"),
+                "total_planned": m.get("totalPlannedAmount"),
+                "total_actual": m.get("totalActualAmount"),
+                "total_remaining": m.get("totalRemainingAmount"),
+                "accounts": [
+                    {
+                        "account_id": (a.get("account") or {}).get("id"),
+                        "name": (a.get("account") or {}).get("displayName"),
+                        "planned": a.get("plannedAmount"),
+                        "actual": a.get("actualAmount"),
+                        "remaining": a.get("remainingAmount"),
+                    }
+                    for a in (m.get("accountBreakdown") or [])
+                ],
+            })
+        return json_success({
+            "goal_id": goal.get("id"),
+            "name": goal.get("name"),
+            "months": months,
+        })
+    except Exception as e:
+        return json_error("get_goal_contributions", e)
+
+
+@mcp.tool()
+async def set_goal_contribution(
+    goal_id: str, account_id: str, amount: float
+) -> str:
+    """
+    Set the budgeted monthly contribution to a goal from one funding account.
+
+    Contributions are budgeted per account, not per goal, which is why the
+    goal-level `plannedMonthlyContribution` cannot be written to directly.
+
+    Accounts you do not mention are left alone -- verified against the live API,
+    so there is no need to resend the whole allocation. Use
+    `get_goal_contributions` to find `account_id` values.
+
+    Args:
+        goal_id: A `savingsGoals` id (see get_goals).
+        account_id: The funding account to budget from.
+        amount: Monthly amount. 0 removes this account's contribution.
+    """
+    try:
+        client = await get_monarch_client()
+        result = await client.gql_call(
+            operation="Common_UpdateSavingsGoal",
+            graphql_query=UPDATE_SAVINGS_GOAL_MUTATION,
+            variables={"input": {
+                "id": goal_id,
+                "accountBudgetAmounts": [
+                    {"accountId": account_id, "amount": amount}
+                ],
+            }},
+        )
+        payload = result.get("updateSavingsGoal") or {}
+        errors = payload.get("errors")
+        if errors:
+            meaningful = {
+                k: v for k, v in errors.items()
+                if k != "__typename" and v is not None
+            }
+            return json_success({
+                "success": False,
+                "errors": meaningful or {
+                    "message": "Monarch rejected the update without a reason"
+                },
+            })
+        return json_success({
+            "success": True,
+            "goal_id": goal_id,
+            "account_id": account_id,
+            "amount": amount,
+            "note": "Other funding accounts for this goal were left unchanged.",
+        })
+    except Exception as e:
+        return json_error("set_goal_contribution", e)
+>>>>>>> feat/get-goals
