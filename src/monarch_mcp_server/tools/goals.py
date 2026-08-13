@@ -15,12 +15,10 @@ logger = logging.getLogger(__name__)
 
 # Monarch disables GraphQL introspection for non-admin users and masks unknown
 # field errors as a generic "Something went wrong", so this selection set was
-# established field-by-field against the live API. Fields confirmed absent on
-# SavingsGoal (do not re-add without re-testing): currentAmount, objective,
-# icon, startingAmount, completionPercent, accountAllocations.
-#
-# Note there is no current-balance field here, so this reports the target and
-# planned contribution but cannot compute progress.
+# established field-by-field against the live API, then reconciled against the
+# web app's own GoalSummaryFields fragment. Note the balance field is
+# `currentBalance`, not `currentAmount`, and progress is served directly as a
+# 0..1 fraction rather than being computed client-side.
 #
 # There are TWO goal collections. `savingsGoals` is the current one and matches
 # what the app shows. `goalsV2` is the superseded collection: on a real account
@@ -39,10 +37,17 @@ query GetSavingsGoals {
     id
     name
     type
+    status
     priority
+    progress
+    currentBalance
     targetAmount
     targetDate
     plannedMonthlyContribution
+    estimatedMonthsUntilCompletion
+    forecastedCompletionDate
+    isSinkingFund
+    createdAt
     archivedAt
     completedAt
     __typename
@@ -82,10 +87,21 @@ async def get_goals() -> str:
                 "id": g.get("id"),
                 "name": g.get("name"),
                 "type": g.get("type"),
+                "status": g.get("status"),
                 "priority": g.get("priority"),
+                "current_balance": g.get("currentBalance"),
+                "progress_percent": (
+                    round(g["progress"] * 100, 1)
+                    if isinstance(g.get("progress"), (int, float)) else None
+                ),
                 "target_amount": g.get("targetAmount"),
                 "target_date": g.get("targetDate"),
                 "planned_monthly_contribution": g.get("plannedMonthlyContribution"),
+                "estimated_months_until_completion": g.get(
+                    "estimatedMonthsUntilCompletion"),
+                "forecasted_completion_date": g.get("forecastedCompletionDate"),
+                "is_sinking_fund": g.get("isSinkingFund"),
+                "created_at": g.get("createdAt"),
                 "archived_at": g.get("archivedAt"),
                 "completed_at": g.get("completedAt"),
             })

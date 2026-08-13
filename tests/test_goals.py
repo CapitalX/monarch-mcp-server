@@ -12,6 +12,8 @@ def _goal(**overrides):
         "name": "Rainy Day Fund",
         "type": "emergency_fund",
         "priority": 2,
+        "progress": 0.24,
+        "currentBalance": 1782.13,
         "targetAmount": 7500.0,
         "targetDate": "2026-12-31",
         "plannedMonthlyContribution": 100.0,
@@ -45,6 +47,9 @@ class TestGetGoals:
         assert data["count"] == 1
         assert data["goals"][0]["target_amount"] == 7500.0
         assert data["goals"][0]["target_date"] == "2026-12-31"
+        assert data["goals"][0]["current_balance"] == 1782.13
+        # progress arrives as a 0..1 fraction and is surfaced as a percentage
+        assert data["goals"][0]["progress_percent"] == 24.0
         # The operation name is the accessible signal that the right
         # collection was queried; the query itself is a parsed DocumentNode.
         assert client.gql_call.call_args.kwargs["operation"] == "GetSavingsGoals"
