@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-<<<<<<< HEAD
-import logging
-=======
 import calendar
 import logging
 from datetime import date
->>>>>>> feat/get-goals
 from typing import Any, Dict, Optional
 
 from gql import gql
@@ -172,20 +168,10 @@ async def update_savings_goal(
     omitted fields are preserved, verified against the live API. Pass only what
     you want to change.
 
-<<<<<<< HEAD
-    NOTE: the monthly contribution cannot be changed here. UpdateSavingsGoalInput
-    accepts `plannedMonthlyContribution` and reports success, but the value does
-    not persist -- it mirrors the goal's budget entry for the month
-    (`currentMonthPlannedContributionAmount`), not a field on the goal. No
-    reachable mutation sets it: the budget-item mutation rejects both `goalId`
-    and `savingsGoalId`. Contribution targets have to be set in the Monarch app.
-    The argument is deliberately absent rather than accepted-and-ignored.
-=======
     NOTE: the monthly contribution is not set here. `plannedMonthlyContribution`
     is a read-only rollup -- the input accepts it and reports success, but the
     value never persists. Contributions are budgeted per funding account; use
     `set_goal_contribution`.
->>>>>>> feat/get-goals
 
     Args:
         goal_id: Goal to update. Use get_goals -- and note these are
@@ -267,8 +253,6 @@ async def update_savings_goal(
         })
     except Exception as e:
         return json_error("update_savings_goal", e)
-<<<<<<< HEAD
-=======
 
 
 GOAL_CONTRIBUTIONS_QUERY = gql("""
@@ -418,4 +402,3 @@ async def set_goal_contribution(
         })
     except Exception as e:
         return json_error("set_goal_contribution", e)
->>>>>>> feat/get-goals

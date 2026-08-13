@@ -3,14 +3,10 @@
 import json
 from unittest.mock import AsyncMock, patch
 
-<<<<<<< HEAD
-from monarch_mcp_server.tools.goals import get_goals, update_savings_goal
-=======
 from monarch_mcp_server.tools.goals import (
     get_goals, update_savings_goal, get_goal_contributions,
     set_goal_contribution,
 )
->>>>>>> feat/get-goals
 
 
 def _goal(**overrides):
@@ -217,8 +213,6 @@ class TestUpdateSavingsGoal:
 
         sent = client.gql_call.call_args.kwargs["variables"]["input"]
         assert sent == {"id": "sg_1", "isSinkingFund": False}
-<<<<<<< HEAD
-=======
 
 
 class TestGoalContributions:
@@ -292,4 +286,3 @@ class TestGoalContributions:
 
         assert data["success"] is False
         assert "Duplicate" in data["errors"]["message"]
->>>>>>> feat/get-goals
