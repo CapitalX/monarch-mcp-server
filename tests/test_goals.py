@@ -86,27 +86,25 @@ class TestGetGoals:
         assert json.loads(await get_goals())["goals"][0]["progress_percent"] is None
 
     @patch('monarch_mcp_server.tools.goals.get_monarch_client')
-    async def test_archived_included_by_default(self, mock_get_client):
-        """Archived goals still hold accounts and balances, so they are kept."""
+    async def test_archived_at_is_raw_and_never_filtered(self, mock_get_client):
+        """A goal with archivedAt set is still returned.
+
+        On a real account archivedAt was stamped with an identical microsecond
+        timestamp on every goal while all of them showed as active in the app,
+        so it does not track the user-facing archive state. Filtering on it
+        would hide every goal the user has.
+        """
         mock_get_client.return_value = _client([
-            _goal(archivedAt="2025-12-16T12:36:36+00:00")
+            _goal(archivedAt="2025-12-16T12:36:36.131496+00:00"),
+            _goal(id="goal_2", name="Retirement",
+                  archivedAt="2025-12-16T12:36:36.131496+00:00"),
         ])
 
         data = json.loads(await get_goals())
 
-        assert data["count"] == 1
-        assert data["goals"][0]["archived"] is True
-
-    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
-    async def test_archived_can_be_excluded(self, mock_get_client):
-        """include_archived=False filters them out."""
-        mock_get_client.return_value = _client([
-            _goal(archivedAt="2025-12-16T12:36:36+00:00")
-        ])
-
-        data = json.loads(await get_goals(include_archived=False))
-
-        assert data["count"] == 0
+        assert data["count"] == 2
+        assert all(g["archived_at"] for g in data["goals"])
+        assert "archived" not in data["goals"][0]
 
     @patch('monarch_mcp_server.tools.goals.get_monarch_client')
     async def test_get_goals_error(self, mock_get_client):
