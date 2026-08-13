@@ -77,6 +77,9 @@ from monarch_mcp_server.tools.financial import (  # noqa: F401
     get_net_worth,
     get_net_worth_by_account_type,
 )
+from monarch_mcp_server.tools.goals import (  # noqa: F401
+    get_goals,
+)
 from monarch_mcp_server.tools.merchants import (  # noqa: F401
     get_merchant,
     update_merchant,
