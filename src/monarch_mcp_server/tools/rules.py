@@ -84,12 +84,71 @@ query GetTransactionRules {
     }
     setHideFromReportsAction
     reviewStatusAction
+    sendNotificationAction
+    setLinkToPaydownBudgetAction
+    criteriaOwnerIsJoint
+    criteriaOwnerUserIds
+    criteriaBusinessEntityIds
+    criteriaBusinessEntityIsUnassigned
+    criteriaBusinessEntities {
+      id
+      name
+      __typename
+    }
+    merchantCriteria {
+      operator
+      value
+      __typename
+    }
+    actionSetOwnerIsJoint
+    actionSetOwner {
+      id
+      displayName
+      __typename
+    }
+    actionSetBusinessEntity {
+      id
+      name
+      __typename
+    }
+    actionSetBusinessEntityIsUnassigned
+    linkSavingsGoalAction {
+      id
+      name
+      __typename
+    }
+    needsReviewByUserAction {
+      id
+      displayName
+      __typename
+    }
+    splitTransactionsAction {
+      amountType
+      splitsInfo {
+        categoryId
+        merchantName
+        amount
+        goalId
+        savingsGoalId
+        tags
+        hideFromReports
+        reviewStatus
+        needsReviewByUserId
+        ownerUserId
+        ownerIsJoint
+        businessEntityId
+        businessEntityIsUnassigned
+        __typename
+      }
+      __typename
+    }
     recentApplicationCount
     lastAppliedAt
     __typename
   }
 }
 """)
+
 
 CREATE_TRANSACTION_RULE_MUTATION = gql("""
 mutation Common_CreateTransactionRuleMutationV2($input: CreateTransactionRuleInput!) {
@@ -697,6 +756,47 @@ async def update_transaction_rule(
         if review:
             rule_input["reviewStatusAction"] = review
 
+        # Plan-gated and less common fields. These are carried forward but not
+        # exposed as arguments: business entities require a paid Monarch plan
+        # and owner fields require household collaboration, so on most accounts
+        # they are simply absent and these lines are no-ops.
+        for field in ("sendNotificationAction", "setLinkToPaydownBudgetAction",
+                      "actionSetOwnerIsJoint", "actionSetBusinessEntityIsUnassigned",
+                      "criteriaOwnerIsJoint", "criteriaBusinessEntityIsUnassigned"):
+            if existing.get(field):
+                rule_input[field] = existing[field]
+        for field in ("criteriaOwnerUserIds", "criteriaBusinessEntityIds"):
+            if existing.get(field):
+                rule_input[field] = existing[field]
+        if existing.get("merchantCriteria"):
+            rule_input["merchantCriteria"] = _criteria_to_input(
+                existing["merchantCriteria"]
+            )
+        if (existing.get("actionSetBusinessEntity") or {}).get("id"):
+            rule_input["actionSetBusinessEntity"] = existing[
+                "actionSetBusinessEntity"]["id"]
+        if (existing.get("actionSetOwner") or {}).get("id"):
+            rule_input["actionSetOwner"] = existing["actionSetOwner"]["id"]
+        # Savings goals are a separate collection from goalsV2 with their own
+        # ids, so linkGoalAction and linkSavingsGoalAction are not interchangeable.
+        if (existing.get("linkSavingsGoalAction") or {}).get("id"):
+            rule_input["linkSavingsGoalAction"] = existing[
+                "linkSavingsGoalAction"]["id"]
+        # Monarch rejects needs_review_by_user_action without a review status,
+        # so the pair has to travel together.
+        reviewer = (existing.get("needsReviewByUserAction") or {}).get("id")
+        if reviewer and rule_input.get("reviewStatusAction"):
+            rule_input["needsReviewByUserAction"] = reviewer
+        split = existing.get("splitTransactionsAction")
+        if split and split.get("splitsInfo"):
+            rule_input["splitTransactionsAction"] = {
+                "amountType": split.get("amountType"),
+                "splitsInfo": [
+                    {k: v for k, v in info.items() if k != "__typename"}
+                    for info in split["splitsInfo"]
+                ],
+            }
+
         result = await client.gql_call(
             operation="Common_UpdateTransactionRuleMutationV2",
             graphql_query=UPDATE_TRANSACTION_RULE_MUTATION,
@@ -756,3 +856,4 @@ async def delete_transaction_rule(rule_id: str) -> str:
         return json_success({"success": True, "message": "Rule deleted successfully"})
     except Exception as e:
         return json_error("delete_transaction_rule", e)
+

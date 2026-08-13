@@ -33,6 +33,19 @@ def _existing_rule(**overrides):
         "linkGoalAction": {"id": "goal_1", "name": "Existing Goal"},
         "setHideFromReportsAction": True,
         "reviewStatusAction": "needs_review",
+        "actionSetBusinessEntity": {"id": "biz_1", "name": "Acme"},
+        "actionSetOwner": {"id": "user_1", "displayName": "Sam"},
+        "linkSavingsGoalAction": {"id": "sg_1", "name": "Rainy Day"},
+        "needsReviewByUserAction": {"id": "user_1", "displayName": "Sam"},
+        "sendNotificationAction": True,
+        "criteriaBusinessEntityIds": ["biz_1"],
+        "splitTransactionsAction": {
+            "amountType": "PERCENTAGE",
+            "splitsInfo": [
+                {"categoryId": "c1", "amount": 60.0, "__typename": "SplitsInfo"},
+                {"categoryId": "c2", "amount": 40.0, "__typename": "SplitsInfo"},
+            ],
+        },
     }
     rule.update(overrides)
     return rule
@@ -572,6 +585,52 @@ class TestUpdateTransactionRule:
         sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
         assert sent["accountIds"] == ["acc_1"]
         assert sent["categoryIds"] == ["cat_filter"]
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_update_preserves_plan_gated_and_nested_actions(self, mock_get_client):
+        """Regression: business entity, owner, savings goal, notification,
+        review assignee and split action must all survive a partial update.
+
+        These were invisible to the merge because the read query did not select
+        them, so a category-only update silently deleted a rule's business
+        entity -- verified against a live account before the fix.
+        """
+        mock_client = _update_mock()
+        mock_get_client.return_value = mock_client
+
+        await update_transaction_rule(rule_id="rule_123", set_category_id="cat_new")
+
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent["actionSetBusinessEntity"] == "biz_1"
+        assert sent["actionSetOwner"] == "user_1"
+        assert sent["linkSavingsGoalAction"] == "sg_1"
+        assert sent["sendNotificationAction"] is True
+        assert sent["criteriaBusinessEntityIds"] == ["biz_1"]
+        # needs_review_by_user_action is rejected without a review status, so
+        # the pair travels together.
+        assert sent["needsReviewByUserAction"] == "user_1"
+        assert sent["reviewStatusAction"] == "needs_review"
+        # splitsInfo is rebuilt without the __typename the read adds.
+        assert sent["splitTransactionsAction"]["amountType"] == "PERCENTAGE"
+        assert sent["splitTransactionsAction"]["splitsInfo"] == [
+            {"categoryId": "c1", "amount": 60.0},
+            {"categoryId": "c2", "amount": 40.0},
+        ]
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_reviewer_dropped_when_review_status_cleared(self, mock_get_client):
+        """Clearing the review status must not leave an orphan assignee.
+
+        Monarch rejects needs_review_by_user_action without review_status_action.
+        """
+        mock_client = _update_mock()
+        mock_get_client.return_value = mock_client
+
+        await update_transaction_rule(rule_id="rule_123", clear_review_status=True)
+
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+        assert "reviewStatusAction" not in sent
+        assert "needsReviewByUserAction" not in sent
 
 
 class TestDeleteTransactionRule:
