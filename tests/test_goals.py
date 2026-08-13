@@ -3,7 +3,7 @@
 import json
 from unittest.mock import AsyncMock, patch
 
-from monarch_mcp_server.tools.goals import get_goals
+from monarch_mcp_server.tools.goals import get_goals, update_savings_goal
 
 
 def _goal(**overrides):
@@ -86,3 +86,103 @@ class TestGetGoals:
 
         assert data["error"] is True
         assert data["tool"] == "get_goals"
+
+
+def _update_client(errors=None, goal=None):
+    c = AsyncMock()
+    c.gql_call.return_value = {
+        "updateSavingsGoal": {
+            "savingsGoal": goal or {
+                "id": "sg_1", "name": "Rainy Day Fund", "targetAmount": 7500.0,
+                "targetDate": "2026-12-31", "plannedMonthlyContribution": 250.0,
+                "priority": 2,
+            },
+            "errors": errors,
+        }
+    }
+    return c
+
+
+class TestUpdateSavingsGoal:
+    """Tests for update_savings_goal tool."""
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_updates_target(self, mock_get_client):
+        client = _update_client()
+        mock_get_client.return_value = client
+
+        data = json.loads(await update_savings_goal("sg_1", target_amount=8000.0))
+
+        assert data["success"] is True
+        sent = client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent == {"id": "sg_1", "targetAmount": 8000.0}
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_only_supplied_fields_are_sent(self, mock_get_client):
+        """Omitted fields are preserved by Monarch, so they must not be sent.
+
+        Sending an unset field as null would clear it.
+        """
+        client = _update_client()
+        mock_get_client.return_value = client
+
+        await update_savings_goal("sg_1", target_amount=8000.0)
+
+        sent = client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent == {"id": "sg_1", "targetAmount": 8000.0}
+        assert "targetDate" not in sent
+        assert "name" not in sent
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_no_fields_is_rejected_without_a_call(self, mock_get_client):
+        client = _update_client()
+        mock_get_client.return_value = client
+
+        data = json.loads(await update_savings_goal("sg_1"))
+
+        assert data["success"] is False
+        client.gql_call.assert_not_called()
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_reports_errors(self, mock_get_client):
+        mock_get_client.return_value = _update_client(
+            errors={"message": "bad", "code": None, "fieldErrors": None})
+
+        data = json.loads(await update_savings_goal("sg_1", target_amount=1.0))
+
+        assert data["success"] is False
+        assert data["errors"]["message"] == "bad"
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_blank_error_payload_is_readable(self, mock_get_client):
+        """An all-null PayloadError becomes a real message, not an empty dict."""
+        mock_get_client.return_value = _update_client(
+            errors={"message": None, "code": None, "fieldErrors": None})
+
+        data = json.loads(await update_savings_goal("sg_1", target_amount=1.0))
+
+        assert data["success"] is False
+        assert data["errors"]["message"]
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_error_handling(self, mock_get_client):
+        c = AsyncMock()
+        c.gql_call.side_effect = Exception("boom")
+        mock_get_client.return_value = c
+
+        data = json.loads(await update_savings_goal("sg_1", target_amount=1.0))
+
+        assert data["error"] is True
+        assert data["tool"] == "update_savings_goal"
+
+    async def test_contribution_is_not_settable(self):
+        """The monthly contribution must not be exposed.
+
+        Monarch accepts plannedMonthlyContribution on this input and reports
+        success, but the value does not persist -- verified against the live
+        API. Accepting the argument would report a change that never happened.
+        """
+        import inspect
+        from monarch_mcp_server.tools.goals import update_savings_goal as fn
+        params = inspect.signature(fn).parameters
+        assert "planned_monthly_contribution" not in params
