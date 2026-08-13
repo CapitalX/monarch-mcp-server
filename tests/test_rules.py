@@ -28,6 +28,11 @@ def _existing_rule(**overrides):
         "categoryIds": None,
         "accountIds": None,
         "setCategoryAction": {"id": "cat_old", "name": "Old"},
+        "setMerchantAction": {"id": "merch_1", "name": "Existing Merchant"},
+        "addTagsAction": [{"id": "tag_1", "name": "Existing Tag"}],
+        "linkGoalAction": {"id": "goal_1", "name": "Existing Goal"},
+        "setHideFromReportsAction": True,
+        "reviewStatusAction": "needs_review",
     }
     rule.update(overrides)
     return rule
@@ -497,6 +502,76 @@ class TestUpdateTransactionRule:
         data = json.loads(result)
         assert data["success"] is False
         assert "missing" in data["message"]
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_update_preserves_actions_it_was_not_given(self, mock_get_client):
+        """Regression: changing one action must not wipe the others.
+
+        Monarch clears any action absent from the mutation input, so a caller
+        passing only link_goal_id previously destroyed the rule's category and
+        merchant silently, with a success response and no warning.
+        """
+        mock_client = _update_mock()
+        mock_get_client.return_value = mock_client
+
+        result = await update_transaction_rule(rule_id="rule_123",
+                                               link_goal_id="goal_new")
+
+        assert json.loads(result)["success"] is True
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+
+        assert sent["linkGoalAction"] == "goal_new"       # the requested change
+        assert sent["setCategoryAction"] == "cat_old"     # preserved
+        assert sent["addTagsAction"] == ["tag_1"]         # preserved
+        assert sent["setHideFromReportsAction"] is True   # preserved
+        assert sent["reviewStatusAction"] == "needs_review"
+        # Carried forward as a NAME. The id would create a new merchant named
+        # with that id string.
+        assert sent["setMerchantAction"] == "Existing Merchant"
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_update_category_preserves_goal_link(self, mock_get_client):
+        """The reverse direction of the same bug."""
+        mock_client = _update_mock()
+        mock_get_client.return_value = mock_client
+
+        await update_transaction_rule(rule_id="rule_123", set_category_id="cat_new")
+
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent["setCategoryAction"] == "cat_new"
+        assert sent["linkGoalAction"] == "goal_1"
+        assert sent["setMerchantAction"] == "Existing Merchant"
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_clear_flags_remove_actions(self, mock_get_client):
+        """clear_* is the only way to remove an action deliberately."""
+        mock_client = _update_mock()
+        mock_get_client.return_value = mock_client
+
+        await update_transaction_rule(
+            rule_id="rule_123",
+            clear_category=True, clear_merchant=True,
+            clear_tags=True, clear_goal_link=True, clear_review_status=True,
+        )
+
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+        for field in ("setCategoryAction", "setMerchantAction", "addTagsAction",
+                      "linkGoalAction", "reviewStatusAction"):
+            assert field not in sent
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_update_preserves_account_and_category_criteria(self, mock_get_client):
+        """Criteria restrictions are carried forward on the same principle."""
+        mock_client = _update_mock(rule=_existing_rule(
+            accountIds=["acc_1"], categoryIds=["cat_filter"],
+        ))
+        mock_get_client.return_value = mock_client
+
+        await update_transaction_rule(rule_id="rule_123", set_category_id="cat_new")
+
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent["accountIds"] == ["acc_1"]
+        assert sent["categoryIds"] == ["cat_filter"]
 
 
 class TestDeleteTransactionRule:

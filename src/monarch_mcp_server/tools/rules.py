@@ -493,19 +493,40 @@ async def update_transaction_rule(
     review_status: Optional[str] = None,
     account_ids: Optional[List[str]] = None,
     category_ids: Optional[List[str]] = None,
+    clear_category: bool = False,
+    clear_merchant: bool = False,
+    clear_tags: bool = False,
+    clear_goal_link: bool = False,
+    clear_review_status: bool = False,
     apply_to_existing: bool = False,
 ) -> str:
     """
-    Update an existing transaction rule. Only the fields you pass are changed.
+    Update an existing transaction rule.
 
-    Monarch's update mutation ignores the request entirely unless the input
-    carries at least one matching criterion, so this reads the rule first and
-    resends its existing criteria alongside your changes. Without that, a call
-    that only changes an action (for example, just the category) is silently
-    discarded by the API.
+    **This call is non-destructive — omitted fields are preserved
+    automatically.** Pass only what you want to change.
+
+    Monarch's update mutation treats criteria and actions asymmetrically, and
+    both halves are hostile to a partial update:
+
+    * It ignores the request entirely unless the input carries at least one
+      matching criterion, so a call that only changes an action would be
+      silently discarded.
+    * It CLEARS any action that is absent from the input. Sending only
+      `link_goal_id` would silently wipe an existing category and merchant.
+
+    So this reads the rule first and resends its full current state — criteria
+    and actions alike — with your changes merged on top. To remove something on
+    purpose, use the matching `clear_*` flag; leaving an argument unset always
+    means "keep whatever is there".
 
     Args:
         rule_id: Id of the rule to update (see get_transaction_rules).
+        clear_category: Remove the category action.
+        clear_merchant: Remove the merchant-rename action.
+        clear_tags: Remove all tag actions.
+        clear_goal_link: Remove the goal link.
+        clear_review_status: Remove the review-status action.
         merchant_criteria_operator: Operator shared by merchant_criteria_values
             ("contains" or "eq"). Defaults to "contains".
         merchant_criteria_value: Single merchant name/pattern to match.
@@ -611,26 +632,70 @@ async def update_transaction_rule(
             rule_input["originalStatementCriteria"] = statement
         if amount:
             rule_input["amountCriteria"] = amount
+        # Remaining criteria, carried forward on the same principle.
         if account_ids is not None:
             rule_input["accountIds"] = account_ids
+        elif existing.get("accountIds"):
+            rule_input["accountIds"] = existing["accountIds"]
         if category_ids is not None:
             rule_input["categoryIds"] = category_ids
         elif existing.get("categoryIds"):
             rule_input["categoryIds"] = existing["categoryIds"]
         if use_original_statement is not None:
             rule_input["merchantCriteriaUseOriginalStatement"] = use_original_statement
-        if set_category_id:
-            rule_input["setCategoryAction"] = set_category_id
-        if set_merchant_name:
-            rule_input["setMerchantAction"] = set_merchant_name
-        if add_tag_ids is not None:
-            rule_input["addTagsAction"] = add_tag_ids
-        if link_goal_id:
-            rule_input["linkGoalAction"] = link_goal_id
-        if hide_from_reports is not None:
-            rule_input["setHideFromReportsAction"] = hide_from_reports
-        if review_status:
-            rule_input["reviewStatusAction"] = review_status
+        elif existing.get("merchantCriteriaUseOriginalStatement") is not None:
+            rule_input["merchantCriteriaUseOriginalStatement"] = existing[
+                "merchantCriteriaUseOriginalStatement"
+            ]
+
+        # Actions. Monarch CLEARS any action missing from the input -- unlike
+        # criteria, which it preserves -- so every action must be resent on
+        # every update or it is silently destroyed. An unset argument means
+        # "keep current"; the clear_* flags are the only way to remove one.
+        existing_tags = [
+            t.get("id") for t in (existing.get("addTagsAction") or []) if t.get("id")
+        ]
+        # setMerchantAction is written as a NAME, not an id. Passing the id
+        # creates a second merchant literally named with that id string.
+        merchant = (
+            None if clear_merchant
+            else (set_merchant_name
+                  or (existing.get("setMerchantAction") or {}).get("name"))
+        )
+        category = (
+            None if clear_category
+            else (set_category_id
+                  or (existing.get("setCategoryAction") or {}).get("id"))
+        )
+        tags = (
+            None if clear_tags
+            else (add_tag_ids if add_tag_ids is not None else existing_tags)
+        )
+        goal = (
+            None if clear_goal_link
+            else (link_goal_id or (existing.get("linkGoalAction") or {}).get("id"))
+        )
+        hide = (
+            hide_from_reports if hide_from_reports is not None
+            else existing.get("setHideFromReportsAction")
+        )
+        review = (
+            None if clear_review_status
+            else (review_status or existing.get("reviewStatusAction"))
+        )
+
+        if category:
+            rule_input["setCategoryAction"] = category
+        if merchant:
+            rule_input["setMerchantAction"] = merchant
+        if tags:
+            rule_input["addTagsAction"] = tags
+        if goal:
+            rule_input["linkGoalAction"] = goal
+        if hide is not None:
+            rule_input["setHideFromReportsAction"] = hide
+        if review:
+            rule_input["reviewStatusAction"] = review
 
         result = await client.gql_call(
             operation="Common_UpdateTransactionRuleMutationV2",
