@@ -870,3 +870,77 @@ async def delete_transaction_rule(rule_id: str) -> str:
     except Exception as e:
         return json_error("delete_transaction_rule", e)
 
+
+REORDER_RULE_MUTATION = gql("""
+mutation Web_UpdateRuleOrderMutation($id: ID!, $order: Int!) {
+  updateTransactionRuleOrderV2(id: $id, order: $order) {
+    transactionRules {
+      id
+      order
+      __typename
+    }
+    __typename
+  }
+}
+""")
+
+
+@mcp.tool()
+async def reorder_transaction_rule(rule_id: str, new_order: int) -> str:
+    """
+    Move a transaction rule to a new position in the evaluation order.
+
+    Order is not cosmetic. Every matching rule runs, in order, and a later rule
+    overwrites an earlier one, so position decides which rule wins when two
+    match the same transaction.
+
+    Monarch renumbers the other rules automatically; the full resulting order
+    is returned so the caller can confirm the outcome.
+
+    Args:
+        rule_id: Rule to move (see get_transaction_rules).
+        new_order: Zero-based target position. 0 runs first.
+    """
+    try:
+        if new_order < 0:
+            return json_success({
+                "success": False, "message": "new_order must be 0 or greater",
+            })
+        client = await get_monarch_client()
+
+        current = await client.gql_call(
+            operation="GetTransactionRules",
+            graphql_query=GET_TRANSACTION_RULES_QUERY,
+            variables={},
+        )
+        existing = next(
+            (r for r in current.get("transactionRules") or []
+             if r.get("id") == rule_id),
+            None,
+        )
+        if existing is None:
+            return json_success({
+                "success": False,
+                "message": f"No transaction rule found with id {rule_id}",
+            })
+
+        result = await client.gql_call(
+            operation="Web_UpdateRuleOrderMutation",
+            graphql_query=REORDER_RULE_MUTATION,
+            variables={"id": rule_id, "order": new_order},
+        )
+        payload = result.get("updateTransactionRuleOrderV2") or {}
+        rules = payload.get("transactionRules") or []
+
+        return json_success({
+            "success": True,
+            "rule_id": rule_id,
+            "moved_from": existing.get("order"),
+            "moved_to": new_order,
+            "order": [
+                {"rule_id": r.get("id"), "order": r.get("order")}
+                for r in sorted(rules, key=lambda r: r.get("order") or 0)
+            ],
+        })
+    except Exception as e:
+        return json_error("reorder_transaction_rule", e)

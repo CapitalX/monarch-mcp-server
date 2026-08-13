@@ -56,6 +56,7 @@ from monarch_mcp_server.tools.tags import (  # noqa: F401
 )
 from monarch_mcp_server.tools.rules import (  # noqa: F401
     get_transaction_rules,
+    reorder_transaction_rule,
     create_transaction_rule,
     update_transaction_rule,
     delete_transaction_rule,

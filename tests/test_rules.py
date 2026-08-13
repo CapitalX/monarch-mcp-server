@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from monarch_mcp_server.tools.rules import (
     get_transaction_rules,
+    reorder_transaction_rule,
     create_transaction_rule,
     update_transaction_rule,
     delete_transaction_rule,
@@ -797,3 +798,49 @@ class TestAmountCriterionIsNeverSilentlyDropped:
             )
         )
         assert result["success"] is True
+
+
+class TestReorderTransactionRule:
+    """Tests for reorder_transaction_rule tool."""
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_reorder_success(self, mock_get_client):
+        """Moving a rule returns the resulting order of every rule."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = [
+            {"transactionRules": [{"id": "rule_1", "order": 3}]},
+            {"updateTransactionRuleOrderV2": {"transactionRules": [
+                {"id": "rule_1", "order": 0}, {"id": "rule_2", "order": 1},
+            ]}},
+        ]
+        mock_get_client.return_value = mock_client
+
+        data = json.loads(await reorder_transaction_rule("rule_1", 0))
+
+        assert data["success"] is True
+        assert data["moved_from"] == 3
+        assert data["moved_to"] == 0
+        assert data["order"][0] == {"rule_id": "rule_1", "order": 0}
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_reorder_unknown_rule(self, mock_get_client):
+        """An unknown id fails before the mutation is sent."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {"transactionRules": []}
+        mock_get_client.return_value = mock_client
+
+        data = json.loads(await reorder_transaction_rule("missing", 0))
+
+        assert data["success"] is False
+        assert mock_client.gql_call.call_count == 1
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_negative_order_rejected(self, mock_get_client):
+        """A negative position is rejected without any API call."""
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        data = json.loads(await reorder_transaction_rule("rule_1", -1))
+
+        assert data["success"] is False
+        mock_client.gql_call.assert_not_called()
