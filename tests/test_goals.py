@@ -186,3 +186,27 @@ class TestUpdateSavingsGoal:
         from monarch_mcp_server.tools.goals import update_savings_goal as fn
         params = inspect.signature(fn).parameters
         assert "planned_monthly_contribution" not in params
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_type_and_sinking_fund_are_settable(self, mock_get_client):
+        """Both persist on the live API, so both are exposed."""
+        client = _update_client()
+        mock_get_client.return_value = client
+
+        await update_savings_goal("sg_1", goal_type="sinking_fund",
+                                  is_sinking_fund=True)
+
+        sent = client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent == {"id": "sg_1", "type": "sinking_fund",
+                        "isSinkingFund": True}
+
+    @patch('monarch_mcp_server.tools.goals.get_monarch_client')
+    async def test_false_is_honoured_not_treated_as_unset(self, mock_get_client):
+        """is_sinking_fund=False must be sent, not dropped as falsy."""
+        client = _update_client()
+        mock_get_client.return_value = client
+
+        await update_savings_goal("sg_1", is_sinking_fund=False)
+
+        sent = client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent == {"id": "sg_1", "isSinkingFund": False}

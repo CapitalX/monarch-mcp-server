@@ -156,6 +156,8 @@ async def update_savings_goal(
     target_date: Optional[str] = None,
     name: Optional[str] = None,
     priority: Optional[int] = None,
+    goal_type: Optional[str] = None,
+    is_sinking_fund: Optional[bool] = None,
 ) -> str:
     """
     Update a savings goal's target or monthly contribution.
@@ -179,6 +181,16 @@ async def update_savings_goal(
         target_date: Target completion date, "YYYY-MM-DD". Optional on a goal.
         name: Rename the goal.
         priority: Ordering among goals, lower first.
+        goal_type: Goal category, e.g. "emergency_fund", "retirement",
+            "sinking_fund". Changes how Monarch treats the goal, so it is not
+            merely a label.
+        is_sinking_fund: Whether the goal is spent down and refilled rather
+            than accumulated.
+
+    Not exposed: the image fields (`imageStorageProvider` /
+    `imageStorageProviderId`) are settable but purely cosmetic. Everything else
+    on the input either is not accepted (`archivedAt`, `completedAt`, `icon`,
+    `color`, `accountIds`) or does not persist (see the note above).
 
     Returns:
         JSON with the goal's state after the update.
@@ -193,6 +205,10 @@ async def update_savings_goal(
             changes["name"] = name
         if priority is not None:
             changes["priority"] = priority
+        if goal_type is not None:
+            changes["type"] = goal_type
+        if is_sinking_fund is not None:
+            changes["isSinkingFund"] = is_sinking_fund
 
         if not changes:
             return json_success({

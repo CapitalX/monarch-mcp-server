@@ -1,16 +1,63 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/robcerda-monarch-mcp-server-badge.png)](https://mseep.ai/app/robcerda-monarch-mcp-server)
-
 # Monarch Money MCP Server
+
+> ### A maintained fork
+>
+> This is a fork of **[robcerda/monarch-mcp-server](https://github.com/robcerda/monarch-mcp-server)**, which appears to have been inactive since **June 2026** — the last merged pull request and the last push to `main` were both on 2026-06-27, with a number of contributions open since.
+>
+> This fork exists to keep those fixes flowing, not to compete. Every change here is also opened as a pull request upstream, and if upstream resumes, the intent is to merge back rather than diverge. Full history, authorship and the MIT license are preserved, including contributions from others (see [Credits](#credits)).
+>
+> If you are the upstream maintainer and want these changes, take them — no attribution negotiation needed.
+
 
 A Model Context Protocol (MCP) server for integrating with the Monarch Money personal finance platform. This server provides seamless access to your financial accounts, transactions, budgets, and analytics through Claude Desktop and Claude Code.
 
-My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_source=share
-
 **Built with the [MonarchMoneyCommunity Python library](https://github.com/bradleyseanf/monarchmoneycommunity)** - An actively maintained community fork of the Monarch Money API with full MFA support.
 
-<a href="https://glama.ai/mcp/servers/@robcerda/monarch-mcp-server">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@robcerda/monarch-mcp-server/badge" alt="monarch-mcp-server MCP server" />
-</a>
+## What this fork adds
+
+Every item below was verified against the live Monarch API, not just against mocks. Several are bugs where the API reports success while silently discarding the change.
+
+### Data-loss fixes
+
+- **`update_transaction_rule` was silently ignored.** Monarch's update mutation discards any request that carries no *matching criteria*, so changing only an action (e.g. just the category) returned success and changed nothing. The rule is now read first and its criteria resent.
+- **`update_transaction_rule` wiped actions it wasn't given.** Monarch *clears* any action absent from the input — the opposite of how it treats criteria. Updating one action destroyed the others: a rule with a category and a merchant, updated with only `link_goal_id`, came back with both null. All actions and criteria are now carried forward, with `clear_*` flags to remove one deliberately.
+- **`delete_transaction_rule` reported successful deletions as failures** — `deleted` comes back `false` even on success. (Cherry-picked from [#86](https://github.com/robcerda/monarch-mcp-server/pull/86) by Jim Ahn, still open upstream.)
+
+### Corrections
+
+- **`get_goals` read the wrong collection.** `goalsV2` is superseded; Monarch migrated to `savingsGoals` and archived every `goalsV2` record in the process — which is why they all share one `archivedAt` timestamp. The old collection serves **pre-migration numbers**: a goal reading a $10,000 target there was $7,500 in reality. The two also use different ids for the same goal, which is why rules carry both `linkGoalAction` and `linkSavingsGoalAction`.
+
+### New tools
+
+| Tool | |
+|---|---|
+| `reorder_transaction_rule` | Order decides precedence — every matching rule runs and later ones overwrite earlier. Uses `updateTransactionRuleOrderV2`, which takes scalar args, not an input object. |
+| `get_account_sync_health` | A broken bank connection fails silently: Monarch keeps serving stale balances and stops importing. Reports re-auth needs, provider disconnects and staleness. |
+| `get_debt_paydown` | Debt paydown is **not** a goal — the legacy debt goal was dropped in the migration and replaced by `debtPaydownPlan`. Flags accounts excluded from the plan, since excluding a high-APR card flatters the debt-free date. |
+| `get_goals` / `update_savings_goal` | Read goals and set target amount, date, name, priority, type and sinking-fund flag. |
+| `monarch_whoami` | Reports the signed-in user and **plan-gated capabilities**, probed against the live schema rather than guessed from entitlement names. |
+| `audit_transaction_rules` | Flags rules that never fire, do nothing, or are overwritten by a later rule. |
+
+### Rule criteria the tools could not previously reach
+
+`originalStatementCriteria` (which Monarch's own docs recommend over merchant name), `categoryIds`, per-value operators, `between` amount ranges, and the business-entity / owner / split actions.
+
+## Known API limitations
+
+Documented so nobody re-derives them:
+
+- **A goal's monthly contribution cannot be set through the API.** Every other field on `UpdateSavingsGoalInput` persists — `name`, `targetAmount`, `targetDate`, `priority`, `type`, `isSinkingFund`, and the image fields. `plannedMonthlyContribution` is the sole exception: it is accepted and returns success, but does not persist. It mirrors the month's budget entry (`currentMonthPlannedContributionAmount`), not a goal field, and the budget-item mutation rejects both `goalId` and `savingsGoalId`. Set it in the app.
+- **Introspection is disabled** for non-admin users, and unknown-field errors are masked as a generic `"Something went wrong"`. Schema discovery is empirical. Note that object-typed fields need a subselection — `field { id }`, not `field` — or a valid field reads as missing.
+- **`SplitAmountType` is an enum.** Monarch accepts a lowercase value on write but then cannot serialise it back, breaking every subsequent `transactionRules` read until the offending rule is deleted.
+- **Parts of the schema are plan-gated.** Business entities are absent entirely on lower tiers — use `monarch_whoami` rather than assuming.
+
+## Credits
+
+Original work by **[Rob Cerda](https://github.com/robcerda)**. This fork keeps the MIT license and full commit history.
+
+`delete_transaction_rule`'s fix is by **[Jim Ahn](https://github.com/ahnj)**, cherry-picked from upstream PR [#86](https://github.com/robcerda/monarch-mcp-server/pull/86) with authorship preserved.
+
+Built on the [MonarchMoneyCommunity](https://github.com/bradleyseanf/monarchmoneycommunity) library.
 
 ## 🚀 Quick Start
 
@@ -18,7 +65,7 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
 
 1. **Clone this repository**:
    ```bash
-   git clone https://github.com/robcerda/monarch-mcp-server.git
+   git clone https://github.com/CapitalX/monarch-mcp-server.git
    cd monarch-mcp-server
    ```
 
