@@ -11,5 +11,6 @@ from monarch_mcp_server.tools import (  # noqa: F401
     categories,
     budgets,
     financial,
+    sync_health,
     merchants,
 )
