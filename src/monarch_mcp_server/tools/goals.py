@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from gql import gql
 
@@ -15,71 +15,40 @@ logger = logging.getLogger(__name__)
 
 # Monarch disables GraphQL introspection for non-admin users and masks unknown
 # field errors as a generic "Something went wrong", so this selection set was
-# established field-by-field against the live API. Fields confirmed absent (do
-# not re-add without re-testing): targetDate, createdAt, updatedAt, goalBalance,
-# balance, progress, completedPercent, isArchived, archived, deletedAt, status.
+# established field-by-field against the live API. Fields confirmed absent on
+# SavingsGoal (do not re-add without re-testing): currentAmount, objective,
+# icon, startingAmount, completionPercent, accountAllocations.
 #
-# `archivedAt` is passed through RAW and deliberately not interpreted. On a real
-# account it was set to an IDENTICAL microsecond timestamp on every goal, while
-# all of those goals showed as active in the Monarch app -- i.e. it reflects
-# some backend bulk event, not the user-facing archive state. There is no other
-# state field on the type, and goalsV2 takes no filter arguments, so a client
-# cannot currently distinguish archived from active goals. Do not filter on it:
-# doing so hides every goal the user has.
+# Note there is no current-balance field here, so this reports the target and
+# planned contribution but cannot compute progress.
+#
+# There are TWO goal collections. `savingsGoals` is the current one and matches
+# what the app shows. `goalsV2` is the superseded collection: on a real account
+# every goalsV2 record carried an identical archivedAt to the microsecond (the
+# migration timestamp) while the same goals showed as active in the app, and
+# their targets were stale -- a goal reading 10000 in goalsV2 was 7500 in
+# savingsGoals. Query savingsGoals; goalsV2 will quietly serve pre-migration
+# numbers.
+#
+# The two also have separate ids for the same goal, which is why a transaction
+# rule has both linkGoalAction and linkSavingsGoalAction and they are NOT
+# interchangeable.
 GET_GOALS_QUERY = gql("""
-query GetGoalsV2 {
-  goalsV2 {
+query GetSavingsGoals {
+  savingsGoals {
     id
     name
-    defaultName
-    objective
     type
     priority
     targetAmount
-    currentAmount
-    startingAmount
+    targetDate
     plannedMonthlyContribution
     archivedAt
     completedAt
-    accountAllocations {
-      id
-      account {
-        id
-        displayName
-        currentBalance
-        __typename
-      }
-      __typename
-    }
     __typename
   }
 }
 """)
-
-
-def _progress(goal: Dict[str, Any]) -> Optional[float]:
-    """Percent complete, or None when it cannot be computed meaningfully.
-
-    Asset goals run from startingAmount (or 0) up to targetAmount. Debt goals
-    run from a negative startingAmount up to a targetAmount of 0, so the naive
-    current/target ratio is wrong for them and is computed against the amount
-    paid down instead.
-    """
-    target = goal.get("targetAmount")
-    current = goal.get("currentAmount")
-    start = goal.get("startingAmount")
-    if current is None or target is None:
-        return None
-
-    if goal.get("type") == "debt":
-        if start is None or start == target:
-            return None
-        return round((start - current) / (start - target) * 100, 1)
-
-    base = start or 0.0
-    if target == base:
-        return None
-    return round((current - base) / (target - base) * 100, 1)
 
 
 @mcp.tool()
@@ -104,35 +73,21 @@ async def get_goals() -> str:
     try:
         client = await get_monarch_client()
         result = await client.gql_call(
-            operation="GetGoalsV2", graphql_query=GET_GOALS_QUERY, variables={}
+            operation="GetSavingsGoals", graphql_query=GET_GOALS_QUERY, variables={}
         )
 
         goals = []
-        for g in result.get("goalsV2") or []:
+        for g in result.get("savingsGoals") or []:
             goals.append({
                 "id": g.get("id"),
                 "name": g.get("name"),
-                "default_name": g.get("defaultName"),
-                "objective": g.get("objective"),
                 "type": g.get("type"),
                 "priority": g.get("priority"),
                 "target_amount": g.get("targetAmount"),
-                "current_amount": g.get("currentAmount"),
-                "starting_amount": g.get("startingAmount"),
+                "target_date": g.get("targetDate"),
                 "planned_monthly_contribution": g.get("plannedMonthlyContribution"),
-                "progress_percent": _progress(g),
                 "archived_at": g.get("archivedAt"),
                 "completed_at": g.get("completedAt"),
-                "accounts": [
-                    {
-                        "account_id": (a.get("account") or {}).get("id"),
-                        "name": (a.get("account") or {}).get("displayName"),
-                        "current_balance": (a.get("account") or {}).get(
-                            "currentBalance"
-                        ),
-                    }
-                    for a in (g.get("accountAllocations") or [])
-                ],
             })
 
         return json_success({
