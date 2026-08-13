@@ -19,6 +19,9 @@ from monarch_mcp_server.tools.auth import (  # noqa: F401
     monarch_login_with_token,
     monarch_logout,
 )
+from monarch_mcp_server.tools.identity import (  # noqa: F401
+    monarch_whoami,
+)
 from monarch_mcp_server.tools.accounts import (  # noqa: F401
     get_accounts,
     refresh_accounts,
