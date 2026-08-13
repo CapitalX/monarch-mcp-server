@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from gql import gql
 
@@ -119,3 +119,122 @@ async def get_goals() -> str:
         })
     except Exception as e:
         return json_error("get_goals", e)
+
+
+UPDATE_SAVINGS_GOAL_MUTATION = gql("""
+mutation Common_UpdateSavingsGoal($input: UpdateSavingsGoalInput!) {
+  updateSavingsGoal(input: $input) {
+    savingsGoal {
+      id
+      name
+      targetAmount
+      targetDate
+      plannedMonthlyContribution
+      priority
+      __typename
+    }
+    errors {
+      message
+      code
+      fieldErrors {
+        field
+        messages
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+""")
+
+
+@mcp.tool()
+async def update_savings_goal(
+    goal_id: str,
+    target_amount: Optional[float] = None,
+    target_date: Optional[str] = None,
+    name: Optional[str] = None,
+    priority: Optional[int] = None,
+) -> str:
+    """
+    Update a savings goal's target or monthly contribution.
+
+    Unlike the transaction-rule mutation, this is a genuine partial update:
+    omitted fields are preserved, verified against the live API. Pass only what
+    you want to change.
+
+    NOTE: the monthly contribution cannot be changed here. UpdateSavingsGoalInput
+    accepts `plannedMonthlyContribution` and reports success, but the value does
+    not persist -- it mirrors the goal's budget entry for the month
+    (`currentMonthPlannedContributionAmount`), not a field on the goal. No
+    reachable mutation sets it: the budget-item mutation rejects both `goalId`
+    and `savingsGoalId`. Contribution targets have to be set in the Monarch app.
+    The argument is deliberately absent rather than accepted-and-ignored.
+
+    Args:
+        goal_id: Goal to update. Use get_goals -- and note these are
+            `savingsGoals` ids, which differ from the legacy goalsV2 ids.
+        target_amount: Total amount the goal is aiming at.
+        target_date: Target completion date, "YYYY-MM-DD". Optional on a goal.
+        name: Rename the goal.
+        priority: Ordering among goals, lower first.
+
+    Returns:
+        JSON with the goal's state after the update.
+    """
+    try:
+        changes: Dict[str, Any] = {}
+        if target_amount is not None:
+            changes["targetAmount"] = target_amount
+        if target_date is not None:
+            changes["targetDate"] = target_date
+        if name is not None:
+            changes["name"] = name
+        if priority is not None:
+            changes["priority"] = priority
+
+        if not changes:
+            return json_success({
+                "success": False,
+                "message": "Nothing to update -- pass at least one field.",
+            })
+
+        client = await get_monarch_client()
+        result = await client.gql_call(
+            operation="Common_UpdateSavingsGoal",
+            graphql_query=UPDATE_SAVINGS_GOAL_MUTATION,
+            variables={"input": {"id": goal_id, **changes}},
+        )
+
+        payload = result.get("updateSavingsGoal") or {}
+        errors = payload.get("errors")
+        if errors:
+            meaningful = {
+                k: v for k, v in errors.items()
+                if k != "__typename" and v is not None
+            }
+            return json_success({
+                "success": False,
+                "errors": meaningful or {
+                    "message": "Monarch rejected the update without a reason"
+                },
+            })
+
+        goal = payload.get("savingsGoal") or {}
+        return json_success({
+            "success": True,
+            "goal_id": goal_id,
+            "changed": sorted(changes),
+            "goal": {
+                "id": goal.get("id"),
+                "name": goal.get("name"),
+                "target_amount": goal.get("targetAmount"),
+                "target_date": goal.get("targetDate"),
+                "planned_monthly_contribution": goal.get(
+                    "plannedMonthlyContribution"),
+                "priority": goal.get("priority"),
+            },
+        })
+    except Exception as e:
+        return json_error("update_savings_goal", e)
