@@ -17,7 +17,15 @@ logger = logging.getLogger(__name__)
 # field errors as a generic "Something went wrong", so this selection set was
 # established field-by-field against the live API. Fields confirmed absent (do
 # not re-add without re-testing): targetDate, createdAt, updatedAt, goalBalance,
-# balance, progress, completedPercent.
+# balance, progress, completedPercent, isArchived, archived, deletedAt, status.
+#
+# `archivedAt` is passed through RAW and deliberately not interpreted. On a real
+# account it was set to an IDENTICAL microsecond timestamp on every goal, while
+# all of those goals showed as active in the Monarch app -- i.e. it reflects
+# some backend bulk event, not the user-facing archive state. There is no other
+# state field on the type, and goalsV2 takes no filter arguments, so a client
+# cannot currently distinguish archived from active goals. Do not filter on it:
+# doing so hides every goal the user has.
 GET_GOALS_QUERY = gql("""
 query GetGoalsV2 {
   goalsV2 {
@@ -75,7 +83,7 @@ def _progress(goal: Dict[str, Any]) -> Optional[float]:
 
 
 @mcp.tool()
-async def get_goals(include_archived: bool = True) -> str:
+async def get_goals() -> str:
     """
     List Monarch savings and debt-paydown goals.
 
@@ -87,10 +95,8 @@ async def get_goals(include_archived: bool = True) -> str:
     "Retirement" and objective "retirement", which is the reliable thing to
     match on programmatically.
 
-    Args:
-        include_archived: Include archived goals. Defaults to True, because an
-            archived goal still holds its accounts and balances and is easy to
-            miss otherwise -- a goal that looks "missing" is usually archived.
+    Every goal is returned. `archived_at` is passed through raw and should not
+    be read as the app's archive state -- see the comment above the query.
 
     Returns:
         JSON list of goals with progress and the accounts allocated to each.
@@ -103,9 +109,6 @@ async def get_goals(include_archived: bool = True) -> str:
 
         goals = []
         for g in result.get("goalsV2") or []:
-            archived = bool(g.get("archivedAt"))
-            if archived and not include_archived:
-                continue
             goals.append({
                 "id": g.get("id"),
                 "name": g.get("name"),
@@ -118,7 +121,6 @@ async def get_goals(include_archived: bool = True) -> str:
                 "starting_amount": g.get("startingAmount"),
                 "planned_monthly_contribution": g.get("plannedMonthlyContribution"),
                 "progress_percent": _progress(g),
-                "archived": archived,
                 "archived_at": g.get("archivedAt"),
                 "completed_at": g.get("completedAt"),
                 "accounts": [
@@ -138,7 +140,9 @@ async def get_goals(include_archived: bool = True) -> str:
             "note": (
                 "Goals track allocated ACCOUNT BALANCES, not categorized "
                 "transactions. A transaction rule only touches a goal via "
-                "link_goal_id, which Monarch requires account_ids alongside."
+                "link_goal_id, which Monarch requires account_ids alongside. "
+                "`archived_at` is raw and does not match the app's archive "
+                "state -- do not filter on it."
             ),
             "goals": goals,
         })
