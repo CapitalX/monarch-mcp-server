@@ -79,6 +79,7 @@ from monarch_mcp_server.tools.financial import (  # noqa: F401
 )
 from monarch_mcp_server.tools.goals import (  # noqa: F401
     get_goals,
+    update_savings_goal,
 )
 from monarch_mcp_server.tools.merchants import (  # noqa: F401
     get_merchant,
