@@ -6,7 +6,10 @@ the protocol — they never appear in tool arguments or the model's context.
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context
+try:  # mcp >= 2.0
+    from mcp.server.mcpserver import Context
+except ImportError:  # mcp < 2.0
+    from mcp.server.fastmcp import Context
 from monarchmoney import MonarchMoney, RequireMFAException
 from pydantic import BaseModel, Field
 
