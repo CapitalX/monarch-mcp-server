@@ -513,6 +513,31 @@ monarch-mcp-server/
 - Session tokens are stored in the system keyring
 - Authentication handled in secure terminal environment
 
+### Strongest option: read only mode
+
+Set `MONARCH_MCP_READ_ONLY=1` in the server's environment and the mutating
+tools are never registered. They do not appear in the tool list and cannot be
+called at all, which is stronger than an approval prompt: a model that was
+talked into a write by a merchant name or memo it read back cannot invoke a
+tool that is not there.
+
+```json
+{
+  "mcpServers": {
+    "Monarch Money": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": ["run", "--project", "/path/to/your/monarch-mcp-server", "monarch-mcp-server"],
+      "env": { "MONARCH_MCP_READ_ONLY": "1" }
+    }
+  }
+}
+```
+
+This leaves 25 of the 49 tools available, covering everything that reads.
+Read only is off by default, so existing setups are unaffected. Note that it
+also removes the login and logout tools, since those change durable state, so
+authenticate with `login_setup.py` before enabling it.
+
 ### Recommended: require approval for mutating tools
 
 These tools mutate your Monarch data. The list is every registered tool that writes, checked against the source rather than maintained by hand:
