@@ -276,7 +276,7 @@ Once authenticated, use these tools directly in Claude Desktop or Claude Code:
 
 ## 🛠️ Available Tools
 
-All 49 registered tools. Required parameters are listed first, optional ones
+All 50 registered tools. Required parameters are listed first, optional ones
 are marked with a trailing question mark. This table is generated from the
 live tool registry and the functions' signatures, so it does not drift.
 
@@ -300,6 +300,7 @@ live tool registry and the functions' signatures, so it does not drift.
 | `get_cashflow` | Get cashflow analysis from Monarch Money | `start_date`?, `end_date`? |
 | `get_cashflow_by_month` | Get spending trends over time, broken down by category and month | `start_date`, `end_date` |
 | `get_category_details` | Get a single category's details including budget amounts for a month | `category_id`, `month`? |
+| `get_debt_paydown` | Get the debt paydown plan and the accounts feeding it | `method`? |
 | `get_merchant` | Get a merchant's details including recurring transaction stream configuration | `merchant_id` |
 | `get_net_worth` | Get net worth history over time | `start_date`?, `end_date`?, `account_type`? |
 | `get_net_worth_by_account_type` | Get net worth breakdown by account type over time | `start_date`, `timeframe`? |
