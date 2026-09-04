@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 # Deliberately not selected: me.birthday and me.profilePictureUrl. They are
 # personal data an agent has no use for, and this tool's output tends to end up
 # in transcripts.
+#
+# The remaining `me` fields are broader than check_auth_status (which only
+# echoes the MONARCH_EMAIL env var and whether a session exists), and that is
+# deliberate rather than an oversight: this tool's whole purpose is answering
+# "who is signed in", so name/email are the substance of the answer, not
+# incidental exposure. `has_password` and `external_auth_providers` are
+# non-financial account metadata with a real diagnostic use -- distinguishing
+# an SSO-only account from one that also has a password, which matters when
+# choosing a login path in login_setup.py. `id` is Monarch's internal user id,
+# not a secret and not derivable from anything sensitive; nothing downstream in
+# this codebase consumes it today, so it is included only in case a caller
+# needs a stable identifier, not because a feature requires it.
 WHOAMI_QUERY = gql("""
 query GetWhoAmI {
   me {
