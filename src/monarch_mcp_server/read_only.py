@@ -44,6 +44,7 @@ MUTATING_TOOLS: FrozenSet[str] = frozenset(
         "create_transaction_rule",
         "update_transaction_rule",
         "delete_transaction_rule",
+        "reorder_transaction_rule",
         # Categories and budgets
         "create_transaction_category",
         "update_category",
