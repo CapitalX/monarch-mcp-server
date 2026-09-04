@@ -54,7 +54,7 @@ async def monarch_login_with_token(ctx: Context) -> str:
     """Sign in to Monarch Money using a browser-copied session token.
 
     Useful for SSO users who can't use password login. Grab the token from
-    browser DevTools → Application → Local Storage → app.monarchmoney.com.
+    browser DevTools → Application → Local Storage → app.monarch.com.
     """
     return await auth.login_with_token_interactive(ctx)
 
