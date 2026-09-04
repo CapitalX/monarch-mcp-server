@@ -59,10 +59,11 @@ class TestGetTransactionsNeedingReview:
 
         result = await get_transactions_needing_review(needs_review=True)
 
-        transactions = json.loads(result)
-        assert len(transactions) == 1
-        assert transactions[0]["id"] == "txn_1"
-        assert transactions[0]["needs_review"] is True
+        # The filter is Monarch's job now, so the mocked page is returned as
+        # given. What matters is that the flag was actually sent upstream.
+        assert mock_client.get_transactions.call_args.kwargs["needs_review"] is True
+        envelope = json.loads(result)
+        assert envelope["count"] == 2
 
     @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     async def test_get_transactions_uncategorized_filter(self, mock_get_client):
@@ -102,7 +103,8 @@ class TestGetTransactionsNeedingReview:
             needs_review=True, uncategorized_only=True
         )
 
-        transactions = json.loads(result)
+        envelope = json.loads(result)
+        transactions = envelope["data"]
         assert len(transactions) == 1
         assert transactions[0]["id"] == "txn_1"
         assert transactions[0]["category"] is None
@@ -149,7 +151,7 @@ class TestGetTransactionsNeedingReview:
 
         result = await get_transactions_needing_review(needs_review=True)
 
-        transactions = json.loads(result)
+        transactions = json.loads(result)["data"]
         assert len(transactions) == 1
         txn = transactions[0]
         assert txn["id"] == "txn_1"
@@ -185,8 +187,9 @@ class TestGetTransactionsNeedingReview:
 
         result = await get_transactions_needing_review()
 
-        transactions = json.loads(result)
-        assert len(transactions) == 0
+        envelope = json.loads(result)
+        assert envelope["count"] == 0
+        assert envelope["data"] == []
 
 
 class TestUpdateTransactionNotes:
@@ -1063,3 +1066,102 @@ class TestRejectedWritesAreNotReportedAsSuccess:
         result = json.loads(await bulk_categorize_transactions(["1"], "cat-1"))
         assert result["failed"] == 1
         assert result["errors"][0]["error"]
+
+
+class TestReviewQueueFiltersServerSide:
+    """The review filter must be Monarch's job, not a local pass over one page.
+
+    Filtering locally meant the tool asked for an arbitrary page of all
+    transactions and reported however many of those happened to need review,
+    with nothing in the response saying the page was truncated and no offset
+    to page past it.
+    """
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    async def test_needs_review_is_sent_upstream(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {"results": [], "totalCount": 0}
+        }
+        mock_get_client.return_value = mock_client
+
+        await get_transactions_needing_review()
+
+        assert mock_client.get_transactions.call_args.kwargs["needs_review"] is True
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    async def test_needs_review_false_inverts_rather_than_disabling(
+        self, mock_get_client
+    ):
+        """False used to mean "no filter", returning the very rows it excluded."""
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {"results": [], "totalCount": 0}
+        }
+        mock_get_client.return_value = mock_client
+
+        await get_transactions_needing_review(needs_review=False)
+
+        assert mock_client.get_transactions.call_args.kwargs["needs_review"] is False
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    async def test_truncation_is_visible_to_the_caller(self, mock_get_client):
+        """A full page against a much larger total must not look complete."""
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {
+                "results": [
+                    {"id": f"txn_{i}", "date": "2024-01-15", "amount": -1.0}
+                    for i in range(3)
+                ],
+                "totalCount": 5000,
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        envelope = json.loads(await get_transactions_needing_review(limit=3))
+
+        assert envelope["count"] == 3
+        assert envelope["total_count"] == 5000
+        assert envelope["truncated"] is True
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    async def test_offset_pages_the_queue(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {"results": [], "totalCount": 0}
+        }
+        mock_get_client.return_value = mock_client
+
+        await get_transactions_needing_review(offset=100)
+
+        assert mock_client.get_transactions.call_args.kwargs["offset"] == 100
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    async def test_local_uncategorized_filter_does_not_claim_a_server_total(
+        self, mock_get_client
+    ):
+        """uncategorized_only still shrinks the page after the fact.
+
+        Reporting the server side total next to it would imply the page is
+        the complete set of uncategorized rows, which it is not.
+        """
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {
+                "results": [
+                    {"id": "a", "category": None},
+                    {"id": "b", "category": {"id": "c1", "name": "Groceries"}},
+                ],
+                "totalCount": 900,
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        envelope = json.loads(
+            await get_transactions_needing_review(uncategorized_only=True)
+        )
+
+        assert envelope["count"] == 1
+        assert envelope["total_count"] is None
+        assert envelope["search"] == {"local_filter": "uncategorized_only"}
