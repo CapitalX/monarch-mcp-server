@@ -24,12 +24,27 @@ logger = logging.getLogger(__name__)
 KEYRING_SERVICE = "com.mcp.monarch-mcp-server"
 KEYRING_USERNAME = "monarch-token"
 
+# Windows Credential Manager rejects credential blobs over ~2560 bytes
+# (CRED_MAX_CREDENTIAL_BLOB_SIZE) with (1783, 'CredWrite', 'The stub
+# received bad data'), and keyring's WinVault backend stores passwords as
+# UTF-16 (2 bytes per char). A cookie-mode session blob (token +
+# device_uuid + cookies incl. cf_clearance) easily exceeds that, so blobs
+# longer than this many characters are split across multiple entries:
+# an index entry at KEYRING_USERNAME plus monarch-token-chunk-0..N-1.
+_KEYRING_CHUNK_SIZE = 1024
+_CHUNK_USERNAME_PREFIX = KEYRING_USERNAME + "-chunk-"
+_CHUNK_MARKER = "__monarch_chunks__"
+# Safety cap when sweeping chunk entries so a misbehaving backend that
+# returns a value for every username can't loop forever.
+_MAX_CHUNKS = 256
+
 # File-based fallback location
 _TOKEN_DIR = Path.home() / ".monarch-mcp-server"
 _TOKEN_FILE = _TOKEN_DIR / "token"
 
 
 _PROBE_USERNAME = "__keyring_probe__"
+_PROBE_VALUE = "x" * _KEYRING_CHUNK_SIZE
 
 
 def _keyring_available() -> bool:
@@ -41,6 +56,10 @@ def _keyring_available() -> bool:
     name-based check rejects real macOS keyrings and silently falls back to
     plaintext file storage. We instead set + get + delete a sentinel value
     and trust the backend only if every step succeeds.
+
+    The probe value is one full chunk (_KEYRING_CHUNK_SIZE chars), not a
+    single byte: Windows Credential Manager accepts tiny writes but rejects
+    large ones, so a 1-byte probe would pass while real saves fail.
     """
     try:
         import keyring
@@ -48,13 +67,30 @@ def _keyring_available() -> bool:
         return False
 
     try:
-        keyring.set_password(KEYRING_SERVICE, _PROBE_USERNAME, "1")
+        keyring.set_password(KEYRING_SERVICE, _PROBE_USERNAME, _PROBE_VALUE)
         stored = keyring.get_password(KEYRING_SERVICE, _PROBE_USERNAME)
         keyring.delete_password(KEYRING_SERVICE, _PROBE_USERNAME)
     except Exception:
         return False
 
-    return stored == "1"
+    return stored == _PROBE_VALUE
+
+
+def _chunk_username(index: int) -> str:
+    return f"{_CHUNK_USERNAME_PREFIX}{index}"
+
+
+def _parse_chunk_count(raw: str) -> Optional[int]:
+    """Return the chunk count if `raw` is a chunk-index entry, else None."""
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(parsed, dict) and isinstance(parsed.get(_CHUNK_MARKER), int):
+        count = parsed[_CHUNK_MARKER]
+        if 0 < count <= _MAX_CHUNKS:
+            return count
+    return None
 
 
 class SecureMonarchSession:
@@ -94,6 +130,85 @@ class SecureMonarchSession:
         if _TOKEN_DIR.is_dir() and not list(_TOKEN_DIR.iterdir()):
             _TOKEN_DIR.rmdir()
 
+    # -- keyring helpers -------------------------------------------------------
+
+    def _keyring_save(self, blob: str) -> None:
+        """Save a blob to the keyring, chunking when it exceeds the safe size.
+
+        Small blobs are stored directly under KEYRING_USERNAME exactly as
+        before. Oversized blobs are split into _KEYRING_CHUNK_SIZE-char
+        pieces under monarch-token-chunk-0..N-1, with a small JSON index
+        entry under KEYRING_USERNAME. Chunks are written before the index so
+        a crash mid-save can't leave an index pointing at missing chunks.
+        Raises on failure so the caller can fall back to file storage.
+        """
+        import keyring
+
+        if len(blob) <= _KEYRING_CHUNK_SIZE:
+            keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, blob)
+            new_count = 0
+        else:
+            chunks = [
+                blob[i : i + _KEYRING_CHUNK_SIZE]
+                for i in range(0, len(blob), _KEYRING_CHUNK_SIZE)
+            ]
+            if len(chunks) > _MAX_CHUNKS:
+                raise ValueError(
+                    f"Session blob too large to chunk: {len(blob)} chars"
+                )
+            for i, chunk in enumerate(chunks):
+                keyring.set_password(KEYRING_SERVICE, _chunk_username(i), chunk)
+            keyring.set_password(
+                KEYRING_SERVICE,
+                KEYRING_USERNAME,
+                json.dumps({_CHUNK_MARKER: len(chunks)}),
+            )
+            new_count = len(chunks)
+
+        # Remove stale chunk entries left over from a previous, larger save.
+        self._delete_chunk_entries(start=new_count)
+
+    def _keyring_load(self) -> Optional[str]:
+        """Load the blob from the keyring, reassembling chunks if needed."""
+        import keyring
+
+        raw = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+        if raw is None:
+            return None
+
+        count = _parse_chunk_count(raw)
+        if count is None:
+            return raw
+
+        parts = []
+        for i in range(count):
+            part = keyring.get_password(KEYRING_SERVICE, _chunk_username(i))
+            if part is None:
+                logger.warning(
+                    "⚠️  Keyring session is chunked but chunk %d/%d is missing",
+                    i,
+                    count,
+                )
+                return None
+            parts.append(part)
+        return "".join(parts)
+
+    def _delete_chunk_entries(self, start: int = 0) -> None:
+        """Delete chunk entries from `start` upward until one is absent."""
+        try:
+            import keyring
+        except ImportError:
+            return
+
+        for i in range(start, _MAX_CHUNKS):
+            username = _chunk_username(i)
+            try:
+                if keyring.get_password(KEYRING_SERVICE, username) is None:
+                    break
+                keyring.delete_password(KEYRING_SERVICE, username)
+            except Exception:
+                break
+
     # -- public API ----------------------------------------------------------
 
     def save_session_blob(
@@ -130,8 +245,7 @@ class SecureMonarchSession:
 
         if self._use_keyring:
             try:
-                import keyring
-                keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, blob)
+                self._keyring_save(blob)
                 logger.info(
                     "✅ Session saved securely to keyring (auth_mode=%s)",
                     auth_mode,
@@ -176,8 +290,7 @@ class SecureMonarchSession:
         raw_session = None
         if self._use_keyring:
             try:
-                import keyring
-                raw_session = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+                raw_session = self._keyring_load()
             except Exception as e:
                 logger.warning(f"⚠️  Keyring load failed, trying file fallback: {e}")
 
@@ -225,6 +338,7 @@ class SecureMonarchSession:
                 logger.info("🗑️ Token deleted from keyring")
             except Exception:
                 pass
+            self._delete_chunk_entries()
 
         # Always try file cleanup too
         self._delete_token_file()

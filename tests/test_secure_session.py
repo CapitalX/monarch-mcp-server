@@ -1,5 +1,6 @@
 """Tests for keyring backend detection and secure session storage."""
 
+import json
 import sys
 import types
 from unittest.mock import MagicMock
@@ -64,7 +65,7 @@ def install_fake_keyring(monkeypatch):
 class TestKeyringAvailable:
     def test_returns_true_when_probe_round_trips(self, install_fake_keyring):
         """A real backend (set + get returns same value + delete) is accepted."""
-        fake = install_fake_keyring(_FakeKeyring(get_returns="1"))
+        fake = install_fake_keyring(_FakeKeyring(get_returns=ss_module._PROBE_VALUE))
         assert _keyring_available() is True
         assert len(fake.set_calls) == 1
         assert len(fake.get_calls) == 1
@@ -79,10 +80,22 @@ class TestKeyringAvailable:
         tokens to be written to a plaintext file. The probe roundtrip ignores
         class names entirely and only trusts what the backend can actually do.
         """
-        fake = install_fake_keyring(_FakeKeyring(get_returns="1"))
+        fake = install_fake_keyring(_FakeKeyring(get_returns=ss_module._PROBE_VALUE))
         # Simulate the macOS Keychain class name to prove name has no effect.
         fake.__class__.__name__ = "Keyring"
         assert _keyring_available() is True
+
+    def test_probe_uses_chunk_sized_payload(self, install_fake_keyring):
+        """A 1-byte probe passes on backends whose real saves fail.
+
+        Windows Credential Manager accepts tiny writes but rejects blobs over
+        ~2560 bytes, so the probe must write a full chunk to prove that
+        chunk-sized saves actually work.
+        """
+        fake = install_fake_keyring(_FakeKeyring(get_returns=ss_module._PROBE_VALUE))
+        _keyring_available()
+        (_service, _username, value) = fake.set_calls[0]
+        assert len(value) == ss_module._KEYRING_CHUNK_SIZE
 
     def test_returns_false_when_set_raises(self, install_fake_keyring):
         """The fail backend raises on set_password — we must NOT trust it."""
@@ -108,7 +121,10 @@ class TestKeyringAvailable:
     def test_returns_false_when_delete_raises(self, install_fake_keyring):
         """Delete failure means cleanup is broken; don't trust the backend."""
         install_fake_keyring(
-            _FakeKeyring(get_returns="1", delete_raises=RuntimeError("rm failed"))
+            _FakeKeyring(
+                get_returns=ss_module._PROBE_VALUE,
+                delete_raises=RuntimeError("rm failed"),
+            )
         )
         assert _keyring_available() is False
 
@@ -129,7 +145,7 @@ class TestKeyringAvailable:
 
     def test_probe_uses_dedicated_username(self, install_fake_keyring):
         """The probe must not clobber the real token username."""
-        fake = install_fake_keyring(_FakeKeyring(get_returns="1"))
+        fake = install_fake_keyring(_FakeKeyring(get_returns=ss_module._PROBE_VALUE))
         _keyring_available()
         for _service, username, _value in fake.set_calls:
             assert username != ss_module.KEYRING_USERNAME
@@ -158,7 +174,7 @@ class _StorageFakeKeyring:
 
 
 @pytest.fixture
-def storage_keyring(monkeypatch):
+def storage_keyring(monkeypatch, tmp_path):
     """Install a roundtrip-capable fake keyring and return a fresh session."""
     fake = _StorageFakeKeyring()
     module = types.ModuleType("keyring")
@@ -166,6 +182,10 @@ def storage_keyring(monkeypatch):
     module.get_password = fake.get_password
     module.delete_password = fake.delete_password
     monkeypatch.setitem(sys.modules, "keyring", module)
+    # Sandbox the file fallback so tests never read or write the real
+    # ~/.monarch-mcp-server/token on the host machine.
+    monkeypatch.setattr(ss_module, "_TOKEN_DIR", tmp_path / "fallback")
+    monkeypatch.setattr(ss_module, "_TOKEN_FILE", tmp_path / "fallback" / "token")
 
     session = ss_module.SecureMonarchSession()
     # __init__ ran the probe and set _use_keyring=True via the fake.
@@ -285,6 +305,172 @@ class TestBackwardCompatLoading:
         )
 
         assert session.load_session() is None
+
+
+class _WindowsLimitedKeyring(_StorageFakeKeyring):
+    """Simulates Windows Credential Manager's CRED_MAX_CREDENTIAL_BLOB_SIZE.
+
+    The WinVault backend stores passwords as UTF-16 (2 bytes/char) and the
+    OS rejects blobs over ~2560 bytes, so writes over 1280 characters fail
+    with the (1783, 'CredWrite', 'The stub received bad data') error.
+    """
+
+    MAX_CHARS = 1280
+
+    def set_password(self, service, username, value):
+        if len(value) > self.MAX_CHARS:
+            raise OSError(1783, "CredWrite", "The stub received bad data")
+        super().set_password(service, username, value)
+
+
+def _oversized_cookies():
+    """Cookies large enough that the JSON blob exceeds one keyring entry."""
+    return {
+        "session_id": "s" * 200,
+        "csrftoken": "c" * 100,
+        "cf_clearance": "f" * 3000,
+    }
+
+
+class TestChunkedKeyringStorage:
+    """Blobs too large for one Windows credential must chunk transparently."""
+
+    def test_oversized_blob_roundtrips(self, storage_keyring):
+        session, fake = storage_keyring
+        cookies = _oversized_cookies()
+        session.save_session_blob(
+            token="tok-abc",
+            device_uuid="dev-xyz",
+            cookies=cookies,
+            auth_mode="cookie",
+        )
+
+        loaded = session.load_session()
+        assert loaded is not None
+        assert loaded["token"] == "tok-abc"
+        assert loaded["device_uuid"] == "dev-xyz"
+        assert loaded["cookies"] == cookies
+        assert loaded["auth_mode"] == "cookie"
+
+    def test_oversized_blob_is_stored_in_chunks(self, storage_keyring):
+        session, fake = storage_keyring
+        session.save_session_blob(cookies=_oversized_cookies(), auth_mode="cookie")
+
+        main = fake.get_password(ss_module.KEYRING_SERVICE, ss_module.KEYRING_USERNAME)
+        index = json.loads(main)
+        count = index[ss_module._CHUNK_MARKER]
+        assert count >= 2
+
+        for i in range(count):
+            chunk = fake.get_password(
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(i)
+            )
+            assert chunk is not None
+            # Every entry must fit within one Windows credential blob.
+            assert len(chunk) <= ss_module._KEYRING_CHUNK_SIZE
+        # No orphan entries past the recorded count.
+        assert (
+            fake.get_password(
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(count)
+            )
+            is None
+        )
+
+    def test_oversized_blob_saves_on_windows_sized_backend(
+        self, monkeypatch, tmp_path
+    ):
+        """The exact production failure: a big cookie blob on Windows.
+
+        Before chunking, set_password raised (1783, 'CredWrite', ...) and the
+        session fell back to a plaintext file. With chunking every write is
+        under the limit, so the save must succeed inside the keyring.
+        """
+        fake = _WindowsLimitedKeyring()
+        module = types.ModuleType("keyring")
+        module.set_password = fake.set_password
+        module.get_password = fake.get_password
+        module.delete_password = fake.delete_password
+        monkeypatch.setitem(sys.modules, "keyring", module)
+        # Point the file fallback at a sandbox so we can prove it stays unused.
+        monkeypatch.setattr(ss_module, "_TOKEN_DIR", tmp_path / "fallback")
+        monkeypatch.setattr(ss_module, "_TOKEN_FILE", tmp_path / "fallback" / "token")
+
+        session = ss_module.SecureMonarchSession()
+        assert session._use_keyring is True
+
+        cookies = _oversized_cookies()
+        session.save_session_blob(cookies=cookies, auth_mode="cookie")
+
+        assert not (tmp_path / "fallback" / "token").exists(), (
+            "oversized session must not fall back to plaintext file storage"
+        )
+        loaded = session.load_session()
+        assert loaded["cookies"] == cookies
+
+    def test_small_save_after_oversized_removes_stale_chunks(self, storage_keyring):
+        session, fake = storage_keyring
+        session.save_session_blob(cookies=_oversized_cookies(), auth_mode="cookie")
+        session.save_session_blob(token="tiny-token", auth_mode="token")
+
+        loaded = session.load_session()
+        assert loaded == {"token": "tiny-token", "auth_mode": "token"}
+        # All chunk entries from the earlier oversized save must be gone.
+        assert (
+            fake.get_password(
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(0)
+            )
+            is None
+        )
+
+    def test_shrinking_oversized_save_removes_extra_chunks(self, storage_keyring):
+        """A smaller (but still chunked) save must not leave orphan chunks."""
+        session, fake = storage_keyring
+        session.save_session_blob(
+            cookies={"cf_clearance": "f" * 8000}, auth_mode="cookie"
+        )
+        session.save_session_blob(
+            cookies={"cf_clearance": "f" * 2000}, auth_mode="cookie"
+        )
+
+        loaded = session.load_session()
+        assert loaded["cookies"] == {"cf_clearance": "f" * 2000}
+        main = fake.get_password(ss_module.KEYRING_SERVICE, ss_module.KEYRING_USERNAME)
+        count = json.loads(main)[ss_module._CHUNK_MARKER]
+        assert (
+            fake.get_password(
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(count)
+            )
+            is None
+        )
+
+    def test_delete_token_removes_index_and_chunks(self, storage_keyring):
+        session, fake = storage_keyring
+        session.save_session_blob(cookies=_oversized_cookies(), auth_mode="cookie")
+
+        session.delete_token()
+
+        assert fake._store == {}
+        assert session.load_session() is None
+
+    def test_missing_chunk_treated_as_no_session(self, storage_keyring):
+        """A corrupted chunked entry must not crash or return partial JSON."""
+        session, fake = storage_keyring
+        session.save_session_blob(cookies=_oversized_cookies(), auth_mode="cookie")
+        fake.delete_password(
+            ss_module.KEYRING_SERVICE, ss_module._chunk_username(1)
+        )
+
+        assert session.load_session() is None
+
+    def test_single_entry_format_unchanged_for_small_blobs(self, storage_keyring):
+        """Small sessions must keep the exact pre-chunking storage format."""
+        session, fake = storage_keyring
+        session.save_session_blob(token="tok", device_uuid="dev", auth_mode="token")
+
+        main = fake.get_password(ss_module.KEYRING_SERVICE, ss_module.KEYRING_USERNAME)
+        parsed = json.loads(main)
+        assert ss_module._CHUNK_MARKER not in parsed
+        assert parsed["token"] == "tok"
 
 
 class TestGetAuthenticatedClient:
