@@ -276,7 +276,7 @@ Once authenticated, use these tools directly in Claude Desktop or Claude Code:
 
 ## 🛠️ Available Tools
 
-All 49 registered tools. Required parameters are listed first, optional ones
+All 50 registered tools. Required parameters are listed first, optional ones
 are marked with a trailing question mark. This table is generated from the
 live tool registry and the functions' signatures, so it does not drift.
 
@@ -295,6 +295,7 @@ live tool registry and the functions' signatures, so it does not drift.
 | `delete_transaction_rule` | Delete a transaction rule | `rule_id` |
 | `get_account_balance_history` | Get historical balance data for a specific account | `account_id` |
 | `get_account_holdings` | Get investment holdings for a specific account | `account_id` |
+| `get_account_sync_health` | Report the health of each linked institution connection | `stale_after_days`? |
 | `get_accounts` | Get all financial accounts from Monarch Money | None |
 | `get_budgets` | Get budget information from Monarch Money | `start_date`?, `end_date`? |
 | `get_cashflow` | Get cashflow analysis from Monarch Money | `start_date`?, `end_date`? |
