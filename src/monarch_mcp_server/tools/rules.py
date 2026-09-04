@@ -421,19 +421,21 @@ async def delete_transaction_rule(rule_id: str) -> str:
             variables={"id": rule_id},
         )
 
-        # Monarch's deleteTransactionRule can return a payload where the
-        # `deleted` flag is absent/null even when the deletion succeeded, which
-        # previously produced a false "Unknown error". Treat an explicit errors
-        # payload (or deleted == False) as failure; otherwise the mutation was
-        # accepted and the rule is gone.
+        # Monarch's deleteTransactionRule returns an unreliable `deleted` flag:
+        # verified against the live API, it comes back `false` even when the rule
+        # was in fact removed (and it is sometimes absent entirely). Trusting it
+        # made every successful deletion report failure.
+        #
+        # A genuine failure does not arrive in this payload at all -- deleting a
+        # non-existent rule raises TransportQueryError ("Not found") from the
+        # GraphQL layer, which the except block below turns into an error result.
+        # So the only in-payload failure signal worth honouring is an explicit
+        # `errors` object.
         delete_result = result.get("deleteTransactionRule") or {}
 
         errors = delete_result.get("errors")
         if errors:
             return json_success({"success": False, "errors": errors})
-
-        if delete_result.get("deleted") is False:
-            return json_success({"success": False, "message": "Rule was not deleted"})
 
         return json_success({"success": True, "message": "Rule deleted successfully"})
     except Exception as e:

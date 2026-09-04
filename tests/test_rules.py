@@ -365,3 +365,21 @@ class TestDeleteTransactionRule:
         data = json.loads(result)
         assert data["success"] is True
         assert "deleted" in data["message"].lower()
+
+    @patch('monarch_mcp_server.tools.rules.get_monarch_client')
+    async def test_delete_rule_success_with_false_deleted_flag(self, mock_get_client):
+        """Monarch returns `deleted: false` with no errors even when the rule
+        was successfully removed (verified against the live API). The flag must
+        not be treated as a failure signal, or every real deletion is reported
+        as having failed."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "deleteTransactionRule": {"deleted": False, "errors": None}
+        }
+        mock_get_client.return_value = mock_client
+
+        result = await delete_transaction_rule(rule_id="rule_123")
+
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "deleted" in data["message"].lower()
