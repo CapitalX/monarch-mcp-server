@@ -174,9 +174,12 @@ async def main():
         print(f"⚠️  Could not check version: {e}")
 
     try:
-        secure_session.delete_token()
-        print("🗑️ Cleared existing secure sessions")
-
+        # The previous session is deliberately left in place until the new one
+        # is verified and saved. Deleting it up front meant that a bad cookie
+        # paste, a Cloudflare captcha, or a 401 on the connection test left the
+        # user with no working session at all, worse off than before running
+        # this script. save_authenticated_session already overwrites whatever
+        # is stored, so nothing needs clearing first.
         print("\nHow do you sign in to Monarch Money?")
         print(
             "  1) Session cookies from browser   "
