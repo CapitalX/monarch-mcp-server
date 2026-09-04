@@ -987,3 +987,79 @@ class TestCategorizeTransaction:
         mock_monarch_client.update_transaction.side_effect = Exception("boom")
         result = await categorize_transaction("txn-1", "cat-2")
         assert "categorize_transaction" in result
+
+
+class TestRejectedWritesAreNotReportedAsSuccess:
+    """gql_call raises on transport and top level GraphQL errors.
+
+    Monarch refuses a mutation differently: errors come back inside the
+    payload of an HTTP 200. Treating "no exception" as success reports writes
+    that never happened, which is worse than failing, because the caller marks
+    the work done and moves on.
+    """
+
+    REJECTION = {
+        "updateTransaction": {
+            "transaction": None,
+            "errors": {"message": "Category not found", "code": "INVALID"},
+        }
+    }
+
+    async def test_categorize_transaction(self, mock_monarch_client):
+        mock_monarch_client.update_transaction.return_value = self.REJECTION
+        result = json.loads(await categorize_transaction("txn-1", "bogus"))
+        assert result["success"] is False
+        assert "Category not found" in json.dumps(result)
+
+    async def test_mark_transaction_reviewed(self, mock_monarch_client):
+        mock_monarch_client.update_transaction.return_value = self.REJECTION
+        result = json.loads(await mark_transaction_reviewed("txn-1"))
+        assert result["success"] is False
+
+    async def test_update_transaction_notes(self, mock_monarch_client):
+        mock_monarch_client.update_transaction.return_value = self.REJECTION
+        result = json.loads(await update_transaction_notes("txn-1", "note"))
+        assert result["success"] is False
+
+    async def test_update_transaction(self, mock_monarch_client):
+        mock_monarch_client.update_transaction.return_value = self.REJECTION
+        result = json.loads(await update_transaction("txn-1", category_id="x"))
+        assert result["success"] is False
+
+    async def test_bulk_categorize_counts_rejections_as_failures(
+        self, mock_monarch_client
+    ):
+        """The whole batch was reported as categorized while nothing was."""
+        mock_monarch_client.update_transaction.return_value = self.REJECTION
+        result = json.loads(
+            await bulk_categorize_transactions(["1", "2", "3"], "bogus")
+        )
+        assert result["successful"] == 0
+        assert result["failed"] == 3
+        assert len(result["errors"]) == 3
+
+    async def test_bulk_categorize_still_counts_real_successes(
+        self, mock_monarch_client
+    ):
+        mock_monarch_client.update_transaction.return_value = {
+            "updateTransaction": {"transaction": {"id": "1"}, "errors": None}
+        }
+        result = json.loads(
+            await bulk_categorize_transactions(["1", "2"], "cat-1")
+        )
+        assert result["successful"] == 2
+        assert result["failed"] == 0
+
+    async def test_bulk_categorize_error_text_is_never_blank(
+        self, mock_monarch_client
+    ):
+        """Some transport exceptions stringify to the empty string."""
+
+        class Silent(Exception):
+            def __str__(self):
+                return ""
+
+        mock_monarch_client.update_transaction.side_effect = Silent()
+        result = json.loads(await bulk_categorize_transactions(["1"], "cat-1"))
+        assert result["failed"] == 1
+        assert result["errors"][0]["error"]

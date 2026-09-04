@@ -282,6 +282,19 @@ def _build_amount_criteria(
             "value": value,
             "valueRange": None,
         }
+
+    # Exactly one half supplied. Dropping the criterion here would create a
+    # rule far broader than the caller asked for and still report success: an
+    # amount threshold that silently disappears leaves a rule matching every
+    # transaction from that merchant, and with apply_to_existing it rewrites
+    # the history immediately. A standing policy is worth failing loudly over.
+    if operator or value is not None:
+        raise ValueError(
+            "amount_operator and amount_value must be given together "
+            f"(got amount_operator={operator!r}, amount_value={value!r}). "
+            "Use amount_operator='between' with amount_lower and amount_upper "
+            "for a range."
+        )
     return None
 
 
