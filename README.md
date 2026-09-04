@@ -276,7 +276,7 @@ Once authenticated, use these tools directly in Claude Desktop or Claude Code:
 
 ## 🛠️ Available Tools
 
-All 49 registered tools. Required parameters are listed first, optional ones
+All 53 registered tools. Required parameters are listed first, optional ones
 are marked with a trailing question mark. This table is generated from the
 live tool registry and the functions' signatures, so it does not drift.
 
@@ -300,6 +300,8 @@ live tool registry and the functions' signatures, so it does not drift.
 | `get_cashflow` | Get cashflow analysis from Monarch Money | `start_date`?, `end_date`? |
 | `get_cashflow_by_month` | Get spending trends over time, broken down by category and month | `start_date`, `end_date` |
 | `get_category_details` | Get a single category's details including budget amounts for a month | `category_id`, `month`? |
+| `get_goal_contributions` | Show a goal's budgeted contributions, broken down by funding account | `goal_id`, `month`? |
+| `get_goals` | List Monarch savings and debt-paydown goals | None |
 | `get_merchant` | Get a merchant's details including recurring transaction stream configuration | `merchant_id` |
 | `get_net_worth` | Get net worth history over time | `start_date`?, `end_date`?, `account_type`? |
 | `get_net_worth_by_account_type` | Get net worth breakdown by account type over time | `start_date`, `timeframe`? |
@@ -322,11 +324,13 @@ live tool registry and the functions' signatures, so it does not drift.
 | `review_recurring_stream` | Set the review status of a recurring transaction stream | `stream_id`, `review_status` |
 | `search_transactions` | Search and filter transactions with comprehensive filtering options | `search`?, `limit`?, `offset`?, `start_date`?, `end_date`?, `category_ids`?, `account_ids`?, `tag_ids`?, `has_attachments`?, `has_notes`?, `hidden_from_reports`?, `is_split`?, `is_recurring`? |
 | `set_budget_amount` | Set or update a budget amount for a category or category group | `amount`, `category_id`?, `category_group_id`?, `start_date`?, `apply_to_future`? |
+| `set_goal_contribution` | Set the budgeted monthly contribution to a goal from one funding account | `goal_id`, `account_id`, `amount` |
 | `set_transaction_tags` | Set tags on a transaction | `transaction_id`, `tag_ids` |
 | `setup_authentication` | Get setup instructions | None |
 | `split_transaction` | Split a transaction into multiple parts with different categories/merchants | `transaction_id`, `splits` |
 | `update_category` | Update an existing category's settings | `category_id`, `name`?, `icon`?, `group_id`?, `category_type`?, `exclude_from_budget`?, `budget_variability`?, `rollover_enabled`?, `rollover_start_month`?, `rollover_starting_balance`?, `rollover_frequency`?, `rollover_target_amount`?, `rollover_type`?, `confirm_rollover_reset`?, `dry_run`? |
 | `update_merchant` | Update a merchant's name and/or recurring transaction stream settings | `merchant_id`, `name`?, `is_recurring`?, `frequency`?, `base_date`?, `amount`?, `is_active`? |
+| `update_savings_goal` | Update a savings goal's target or monthly contribution | `goal_id`, `target_amount`?, `target_date`?, `name`?, `priority`?, `goal_type`?, `is_sinking_fund`? |
 | `update_transaction` | Update an existing transaction in Monarch Money | `transaction_id`, `category_id`?, `merchant_name`?, `goal_id`?, `amount`?, `date`?, `hide_from_reports`?, `needs_review`?, `notes`? |
 | `update_transaction_notes` | Update the notes/memo for a transaction | `transaction_id`, `notes`, `receipt_url`? |
 | `update_transaction_rule` | Update an existing transaction rule | `rule_id`, `merchant_criteria_operator`?, `merchant_criteria_value`?, `merchant_criteria_values`?, `merchant_criteria`?, `original_statement_operator`?, `original_statement_values`?, `original_statement_criteria`?, `use_original_statement`?, `amount_operator`?, `amount_value`?, `amount_lower`?, `amount_upper`?, `amount_is_expense`?, `set_category_id`?, `set_merchant_name`?, `add_tag_ids`?, `link_goal_id`?, `hide_from_reports`?, `review_status`?, `account_ids`?, `category_ids`?, `clear_category`?, `clear_merchant`?, `clear_tags`?, `clear_goal_link`?, `clear_review_status`?, `apply_to_existing`? |
@@ -533,7 +537,7 @@ tool that is not there.
 }
 ```
 
-This leaves 25 of the 49 tools available, covering everything that reads.
+This leaves 27 of the 53 tools available, covering everything that reads.
 Read only is off by default, so existing setups are unaffected. Note that it
 also removes the login and logout tools, since those change durable state, so
 authenticate with `login_setup.py` before enabling it.
@@ -549,6 +553,8 @@ These tools mutate your Monarch data. The list is every registered tool that wri
 **Rules**: `create_transaction_rule`, `update_transaction_rule`, `delete_transaction_rule`
 
 **Categories and budgets**: `create_transaction_category`, `update_category`, `set_budget_amount`
+
+**Goals**: `update_savings_goal`, `set_goal_contribution`
 
 **Merchants**: `update_merchant`, `review_recurring_stream`
 
