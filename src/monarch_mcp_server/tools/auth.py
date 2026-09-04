@@ -62,15 +62,33 @@ async def monarch_logout() -> str:
     return await auth.logout()
 
 
+def _describe_session(session: dict | None) -> str:
+    """Summarize a stored session without leaking credential values.
+
+    A cookie-mode session carries no token, so probing for a token alone
+    reports a false negative on sessions that authenticate fine.
+    """
+    if not session:
+        return "❌ No Monarch session found in secure storage"
+
+    auth_mode = session.get("auth_mode", "token")
+    credentials = []
+    if session.get("cookies"):
+        credentials.append("cookies")
+    if session.get("token"):
+        credentials.append("token")
+
+    return (
+        f"✅ Session found in secure storage (auth_mode={auth_mode}, "
+        f"credentials: {', '.join(credentials)})"
+    )
+
+
 @mcp.tool()
 async def check_auth_status() -> str:
     """Check if already authenticated with Monarch Money."""
     try:
-        token = secure_session.load_token()
-        if token:
-            status = "✅ Authentication token found in secure keyring storage\n"
-        else:
-            status = "❌ No authentication token found in keyring\n"
+        status = _describe_session(secure_session.load_session()) + "\n"
 
         email = os.getenv("MONARCH_EMAIL")
         if email:
@@ -87,12 +105,15 @@ async def check_auth_status() -> str:
 
 @mcp.tool()
 async def debug_session_loading() -> str:
-    """Debug keyring session loading issues."""
+    """Debug session loading issues."""
     try:
-        token = secure_session.load_token()
-        if token:
-            return "✅ Token found in keyring."
-        return "❌ No token found in keyring. Run login_setup.py to authenticate."
+        session = secure_session.load_session()
+        if session:
+            return _describe_session(session) + "."
+        return (
+            "❌ No Monarch session found in secure storage. "
+            "Run login_setup.py to authenticate."
+        )
     except Exception as e:
         logger.exception("Keyring access failed")
         return f"❌ Keyring access failed: {type(e).__name__}: {e}"

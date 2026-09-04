@@ -111,33 +111,52 @@ class TestLogout:
 
 
 class TestDebugSessionLoading:
-    def test_no_token_message(self):
+    def test_no_session_message(self):
         from monarch_mcp_server.tools import auth as tools_auth
 
         with patch(
-            "monarch_mcp_server.tools.auth.secure_session.load_token",
+            "monarch_mcp_server.tools.auth.secure_session.load_session",
             return_value=None,
         ):
             result = asyncio.run(tools_auth.debug_session_loading())
-        assert "No token" in result
+        assert "No Monarch session" in result
 
     def test_token_present_does_not_leak_length(self):
         from monarch_mcp_server.tools import auth as tools_auth
 
         with patch(
-            "monarch_mcp_server.tools.auth.secure_session.load_token",
-            return_value="a-secret-token-value",
+            "monarch_mcp_server.tools.auth.secure_session.load_session",
+            return_value={"token": "a-secret-token-value", "auth_mode": "token"},
         ):
             result = asyncio.run(tools_auth.debug_session_loading())
-        assert "Token found" in result
+        assert "Session found" in result
+        assert "auth_mode=token" in result
         assert "length" not in result.lower()
         assert "a-secret-token-value" not in result
+
+    def test_cookie_session_reports_authenticated(self):
+        """Cookie-mode sessions carry no token; they must not read as missing."""
+        from monarch_mcp_server.tools import auth as tools_auth
+
+        with patch(
+            "monarch_mcp_server.tools.auth.secure_session.load_session",
+            return_value={
+                "cookies": {"session_id": "s3cr3t", "csrftoken": "c5rf"},
+                "auth_mode": "cookie",
+            },
+        ):
+            result = asyncio.run(tools_auth.debug_session_loading())
+        assert "Session found" in result
+        assert "auth_mode=cookie" in result
+        assert "cookies" in result
+        assert "s3cr3t" not in result
+        assert "c5rf" not in result
 
     def test_keyring_failure_omits_traceback(self):
         from monarch_mcp_server.tools import auth as tools_auth
 
         with patch(
-            "monarch_mcp_server.tools.auth.secure_session.load_token",
+            "monarch_mcp_server.tools.auth.secure_session.load_session",
             side_effect=RuntimeError("keyring backend unavailable"),
         ):
             result = asyncio.run(tools_auth.debug_session_loading())
@@ -146,6 +165,33 @@ class TestDebugSessionLoading:
         assert "keyring backend unavailable" in result
         assert "Traceback" not in result
         assert 'File "' not in result
+
+
+class TestCheckAuthStatus:
+    def test_cookie_session_reports_authenticated(self):
+        from monarch_mcp_server.tools import auth as tools_auth
+
+        with patch(
+            "monarch_mcp_server.tools.auth.secure_session.load_session",
+            return_value={
+                "cookies": {"session_id": "s3cr3t"},
+                "auth_mode": "cookie",
+            },
+        ):
+            result = asyncio.run(tools_auth.check_auth_status())
+        assert "Session found" in result
+        assert "auth_mode=cookie" in result
+        assert "s3cr3t" not in result
+
+    def test_no_session_reports_missing(self):
+        from monarch_mcp_server.tools import auth as tools_auth
+
+        with patch(
+            "monarch_mcp_server.tools.auth.secure_session.load_session",
+            return_value=None,
+        ):
+            result = asyncio.run(tools_auth.check_auth_status())
+        assert "No Monarch session" in result
 
 
 class TestElicitNotSupported:
