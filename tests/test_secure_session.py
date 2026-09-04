@@ -118,15 +118,42 @@ class TestKeyringAvailable:
         )
         assert _keyring_available() is False
 
-    def test_returns_false_when_delete_raises(self, install_fake_keyring):
-        """Delete failure means cleanup is broken; don't trust the backend."""
+    def test_delete_failure_does_not_reject_a_working_backend(
+        self, install_fake_keyring
+    ):
+        """A backend that stores and returns the sentinel is usable.
+
+        Rejecting it because the probe could not clean itself up downgrades a
+        working keyring to plaintext file storage, which is strictly worse than
+        leaving one stale sentinel entry behind.
+        """
         install_fake_keyring(
             _FakeKeyring(
                 get_returns=ss_module._PROBE_VALUE,
                 delete_raises=RuntimeError("rm failed"),
             )
         )
+        assert _keyring_available() is True
+
+    def test_probe_username_is_process_scoped(self):
+        """Concurrent server processes must not race on one shared sentinel.
+
+        MCP hosts start more than one server process. With a single shared
+        probe username their probes interleave, one process deletes the
+        sentinel the other just wrote, and that process concludes the keyring
+        is unusable for its whole lifetime.
+        """
+        import os
+
+        assert str(os.getpid()) in ss_module._PROBE_USERNAME
+
+    def test_probe_cleans_up_even_when_get_raises(self, install_fake_keyring):
+        """A failed probe must not leave its sentinel behind."""
+        fake = install_fake_keyring(
+            _FakeKeyring(get_raises=RuntimeError("read failed"))
+        )
         assert _keyring_available() is False
+        assert [u for _s, u in fake.delete_calls] == [ss_module._PROBE_USERNAME]
 
     def test_returns_false_when_keyring_not_installed(self, monkeypatch):
         """If the keyring package is absent, treat as unavailable, don't crash."""
@@ -359,11 +386,12 @@ class TestChunkedKeyringStorage:
         main = fake.get_password(ss_module.KEYRING_SERVICE, ss_module.KEYRING_USERNAME)
         index = json.loads(main)
         count = index[ss_module._CHUNK_MARKER]
+        generation = index[ss_module._CHUNK_GEN_MARKER]
         assert count >= 2
 
         for i in range(count):
             chunk = fake.get_password(
-                ss_module.KEYRING_SERVICE, ss_module._chunk_username(i)
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(i, generation)
             )
             assert chunk is not None
             # Every entry must fit within one Windows credential blob.
@@ -371,7 +399,8 @@ class TestChunkedKeyringStorage:
         # No orphan entries past the recorded count.
         assert (
             fake.get_password(
-                ss_module.KEYRING_SERVICE, ss_module._chunk_username(count)
+                ss_module.KEYRING_SERVICE,
+                ss_module._chunk_username(count, generation),
             )
             is None
         )
@@ -415,12 +444,14 @@ class TestChunkedKeyringStorage:
         loaded = session.load_session()
         assert loaded == {"token": "tiny-token", "auth_mode": "token"}
         # All chunk entries from the earlier oversized save must be gone.
-        assert (
-            fake.get_password(
-                ss_module.KEYRING_SERVICE, ss_module._chunk_username(0)
+        for generation in (None, *ss_module._CHUNK_GENERATIONS):
+            assert (
+                fake.get_password(
+                    ss_module.KEYRING_SERVICE,
+                    ss_module._chunk_username(0, generation),
+                )
+                is None
             )
-            is None
-        )
 
     def test_shrinking_oversized_save_removes_extra_chunks(self, storage_keyring):
         """A smaller (but still chunked) save must not leave orphan chunks."""
@@ -435,10 +466,12 @@ class TestChunkedKeyringStorage:
         loaded = session.load_session()
         assert loaded["cookies"] == {"cf_clearance": "f" * 2000}
         main = fake.get_password(ss_module.KEYRING_SERVICE, ss_module.KEYRING_USERNAME)
-        count = json.loads(main)[ss_module._CHUNK_MARKER]
+        index = json.loads(main)
+        count = index[ss_module._CHUNK_MARKER]
         assert (
             fake.get_password(
-                ss_module.KEYRING_SERVICE, ss_module._chunk_username(count)
+                ss_module.KEYRING_SERVICE,
+                ss_module._chunk_username(count, index[ss_module._CHUNK_GEN_MARKER]),
             )
             is None
         )
@@ -456,8 +489,12 @@ class TestChunkedKeyringStorage:
         """A corrupted chunked entry must not crash or return partial JSON."""
         session, fake = storage_keyring
         session.save_session_blob(cookies=_oversized_cookies(), auth_mode="cookie")
+        index = json.loads(
+            fake.get_password(ss_module.KEYRING_SERVICE, ss_module.KEYRING_USERNAME)
+        )
         fake.delete_password(
-            ss_module.KEYRING_SERVICE, ss_module._chunk_username(1)
+            ss_module.KEYRING_SERVICE,
+            ss_module._chunk_username(1, index[ss_module._CHUNK_GEN_MARKER]),
         )
 
         assert session.load_session() is None
@@ -471,6 +508,246 @@ class TestChunkedKeyringStorage:
         parsed = json.loads(main)
         assert ss_module._CHUNK_MARKER not in parsed
         assert parsed["token"] == "tok"
+
+
+class TestFailedSaveIsNonDestructive:
+    """A save that fails must never cost the user the session they had.
+
+    Chunk entries are written under a generation tag and the index is flipped
+    only once every chunk is stored, so a partial write is invisible.
+    """
+
+    def test_partial_chunk_write_leaves_previous_session_intact(
+        self, storage_keyring, monkeypatch
+    ):
+        session, fake = storage_keyring
+        good = {"session_id": "s" * 200, "cf_clearance": "f" * 3000}
+        session.save_session_blob(cookies=good, auth_mode="cookie")
+        assert session.load_session()["cookies"] == good
+
+        # Fail midway through writing the replacement, the way Windows
+        # Credential Manager does when it runs out of credential space.
+        calls = {"n": 0}
+        real_set = fake.set_password
+
+        def flaky_set(service, username, value):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise OSError(1783, "CredWrite", "The stub received bad data")
+            return real_set(service, username, value)
+
+        monkeypatch.setitem(
+            sys.modules,
+            "keyring",
+            _module_from(fake, set_password=flaky_set),
+        )
+
+        with pytest.raises(OSError):
+            session._keyring_save("x" * 5000)
+
+        # The session the user actually had is still there and still correct.
+        assert session.load_session()["cookies"] == good
+
+    def test_corrupt_keyring_entry_falls_through_to_file_fallback(
+        self, storage_keyring, monkeypatch, tmp_path
+    ):
+        """A bad keyring read must not strand a user who has a good file."""
+        session, fake = storage_keyring
+        session._save_token_file(
+            json.dumps({"token": "file-token", "auth_mode": "token"})
+        )
+        fake.set_password(
+            ss_module.KEYRING_SERVICE,
+            ss_module.KEYRING_USERNAME,
+            '{"auth_mode": "cookie", "token": "eyJ0eX',
+        )
+
+        loaded = session.load_session()
+        assert loaded is not None, "a corrupt keyring entry hid a good session"
+        assert loaded["token"] == "file-token"
+
+    def test_legacy_ungenerationed_chunks_still_load(self, storage_keyring):
+        """Sessions written before generations existed must survive upgrade."""
+        session, fake = storage_keyring
+        blob = json.dumps({"token": "t" * 2000, "auth_mode": "token"})
+        chunks = [
+            blob[i : i + ss_module._KEYRING_CHUNK_SIZE]
+            for i in range(0, len(blob), ss_module._KEYRING_CHUNK_SIZE)
+        ]
+        for i, chunk in enumerate(chunks):
+            fake.set_password(
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(i), chunk
+            )
+        fake.set_password(
+            ss_module.KEYRING_SERVICE,
+            ss_module.KEYRING_USERNAME,
+            json.dumps({ss_module._CHUNK_MARKER: len(chunks)}),
+        )
+
+        assert session.load_session()["token"] == "t" * 2000
+
+    def test_next_save_after_legacy_chunks_does_not_clobber_them(
+        self, storage_keyring
+    ):
+        """The first generationed save must not overwrite the live legacy data."""
+        session, fake = storage_keyring
+        blob = json.dumps({"token": "t" * 2000, "auth_mode": "token"})
+        chunks = [
+            blob[i : i + ss_module._KEYRING_CHUNK_SIZE]
+            for i in range(0, len(blob), ss_module._KEYRING_CHUNK_SIZE)
+        ]
+        for i, chunk in enumerate(chunks):
+            fake.set_password(
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(i), chunk
+            )
+        fake.set_password(
+            ss_module.KEYRING_SERVICE,
+            ss_module.KEYRING_USERNAME,
+            json.dumps({ss_module._CHUNK_MARKER: len(chunks)}),
+        )
+
+        session.save_session_blob(cookies={"cf_clearance": "n" * 3000}, auth_mode="cookie")
+
+        assert session.load_session()["cookies"] == {"cf_clearance": "n" * 3000}
+        # The superseded legacy chunks are cleaned up, not left dangling.
+        assert (
+            fake.get_password(
+                ss_module.KEYRING_SERVICE, ss_module._chunk_username(0)
+            )
+            is None
+        )
+
+
+def _module_from(fake, **overrides):
+    module = types.ModuleType("keyring")
+    module.set_password = overrides.get("set_password", fake.set_password)
+    module.get_password = overrides.get("get_password", fake.get_password)
+    module.delete_password = overrides.get("delete_password", fake.delete_password)
+    return module
+
+
+@pytest.fixture
+def file_session(monkeypatch, tmp_path):
+    """A session forced onto the file fallback, sandboxed to tmp_path."""
+    monkeypatch.setattr(ss_module, "_keyring_available", lambda: False)
+    monkeypatch.setattr(ss_module, "_TOKEN_DIR", tmp_path / "store")
+    monkeypatch.setattr(ss_module, "_TOKEN_FILE", tmp_path / "store" / "token")
+    session = ss_module.SecureMonarchSession()
+    assert session._use_keyring is False
+    return session, tmp_path / "store" / "token"
+
+
+class TestFileFallbackWrites:
+    """The file fallback holds a full access credential; treat it as one."""
+
+    def test_file_is_never_world_readable(self, file_session):
+        """0600 must be set at creation, not after the bytes are on disk.
+
+        write_text creates the file under the process umask (typically 0644)
+        and only then chmods, leaving a window where any local user can read
+        the token.
+        """
+        import os
+        import stat as stat_module
+
+        session, token_file = file_session
+        session.save_session_blob(token="tok", auth_mode="token")
+
+        mode = stat_module.S_IMODE(os.stat(token_file).st_mode)
+        assert mode == 0o600, oct(mode)
+        dir_mode = stat_module.S_IMODE(os.stat(token_file.parent).st_mode)
+        assert dir_mode == 0o700, oct(dir_mode)
+
+    def test_write_is_atomic_via_replace(self, file_session, monkeypatch):
+        """A reader must never observe a partially written blob."""
+        import os
+
+        session, token_file = file_session
+        session.save_session_blob(token="original", auth_mode="token")
+
+        seen = {}
+        real_replace = os.replace
+
+        def spy_replace(src, dst):
+            # Before the rename lands, the live file still holds the old blob.
+            seen["during"] = ss_module._TOKEN_FILE.read_text()
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", spy_replace)
+        session.save_session_blob(token="replacement", auth_mode="token")
+
+        assert "original" in seen["during"]
+        assert session.load_session()["token"] == "replacement"
+
+    def test_failed_write_leaves_no_temp_file_behind(self, file_session, monkeypatch):
+        import os
+
+        session, token_file = file_session
+        session.save_session_blob(token="good", auth_mode="token")
+
+        def boom(src, dst):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+        with pytest.raises(OSError):
+            session.save_session_blob(token="doomed", auth_mode="token")
+
+        assert session.load_session()["token"] == "good"
+        assert list(token_file.parent.iterdir()) == [token_file]
+
+
+class TestCorruptedSessionHandling:
+    """A truncated JSON blob must not be reinterpreted as a bare token."""
+
+    def test_truncated_json_is_not_treated_as_a_legacy_token(self, file_session):
+        """The exact half-written-blob shape from a crash mid save.
+
+        Read back as a token it becomes an Authorization header of garbage,
+        and every call 401s for the life of the process.
+        """
+        session, token_file = file_session
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text('{"auth_mode": "cookie", "token": "eyJ0eX')
+
+        assert session.load_session() is None
+
+    def test_truncated_json_array_is_also_rejected(self, file_session):
+        session, token_file = file_session
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text('[{"token": "abc"')
+
+        assert session.load_session() is None
+
+    def test_genuine_legacy_bare_token_still_loads(self, file_session):
+        """Very old installs stored the raw token string; keep reading those."""
+        session, token_file = file_session
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text("legacy-bare-token-value")
+
+        assert session.load_session() == {
+            "token": "legacy-bare-token-value",
+            "auth_mode": "token",
+        }
+
+    def test_spliced_chunk_debris_is_not_accepted_as_a_token(self, file_session):
+        """Debris that does not start with a brace must still be rejected.
+
+        Reassembling chunks from two different saves produces exactly this
+        shape. Accepted as a token it yields a client whose every call fails
+        with an opaque 401 for the life of the process.
+        """
+        session, token_file = file_session
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text('xxxxxxxx", "cookies": {"cf_clearance": "ffff"}}')
+
+        assert session.load_session() is None
+
+    def test_absurdly_long_value_is_not_accepted_as_a_token(self, file_session):
+        session, token_file = file_session
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text("x" * 5000)
+
+        assert session.load_session() is None
 
 
 class TestGetAuthenticatedClient:
