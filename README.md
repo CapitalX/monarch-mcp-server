@@ -279,47 +279,61 @@ Once authenticated, use these tools directly in Claude Desktop or Claude Code:
 
 ## 🛠️ Available Tools
 
+All 49 registered tools. Required parameters are listed first, optional ones
+are marked with a trailing question mark. This table is generated from the
+live tool registry and the functions' signatures, so it does not drift.
+
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `setup_authentication` | Get setup instructions | None |
-| `check_auth_status` | Check authentication status | None |
-| `get_accounts` | Get all financial accounts | None |
-| `get_transactions` | Get transactions with filtering and reconciliation fields | `limit`, `offset`, `start_date`, `end_date`, `account_id`, `account_ids`, `category_ids`, `category_group_ids`, `tag_ids`, `search`, `wide_search`, `search_scan_limit`, `has_notes`, `is_split`, `is_recurring` |
-| `get_budgets` | Get budget information | `start_date`, `end_date` |
-| `set_budget_amount` | Set budget for a category | `amount`, `category_id`, `category_group_id`, `start_date`, `apply_to_future` |
-| `get_cashflow` | Get cashflow analysis | `start_date`, `end_date` |
-| `get_net_worth` | Get net worth history | `start_date`, `end_date`, `account_type` |
-| `get_account_balance_history` | Get account balance history | `account_id` |
-| `get_net_worth_by_account_type` | Get net worth by account type | `start_date`, `timeframe` |
-| `get_account_holdings` | Get investment holdings | `account_id` |
-| `create_transaction` | Create new transaction | `account_id`, `amount`, `description`, `date`, `category_id`, `merchant_name` |
-| `update_transaction` | Update existing transaction | `transaction_id`, `amount`, `description`, `category_id`, `date` |
-| `refresh_accounts` | Request account data refresh | `account_ids` (optional — defaults to all active, visible accounts) |
-| `get_categories` | List all transaction categories | None |
-| `get_category_groups` | List category groups with categories | None |
-| `get_transactions_needing_review` | Get transactions needing review | `needs_review`, `days`, `uncategorized`, `no_notes` |
-| `set_transaction_category` | Set category on a transaction | `transaction_id`, `category_id`, `mark_reviewed` |
-| `update_transaction_notes` | Update notes on a transaction | `transaction_id`, `notes` |
-| `mark_transaction_reviewed` | Mark transaction as reviewed | `transaction_id` |
-| `bulk_categorize_transactions` | Categorize multiple transactions | `transaction_ids`, `category_id` |
-| `get_tags` | List all tags | None |
+| `add_transaction_tag` | Add a tag to a transaction, preserving any tags already on it | `transaction_id`, `tag_id` |
+| `bulk_categorize_transactions` | Apply the same category to multiple transactions at once | `transaction_ids`, `category_id`, `mark_reviewed`?, `dry_run`? |
+| `categorize_transaction` | Assign a category to a transaction | `transaction_id`, `category_id` |
+| `check_auth_status` | Report the stored session and its auth mode | None |
+| `create_transaction` | Create a new transaction in Monarch Money | `date`, `account_id`, `amount`, `merchant_name`, `category_id`, `notes`?, `update_balance`? |
+| `create_transaction_category` | Create a new transaction category | `group_id`, `transaction_category_name`, `icon`?, `rollover_enabled`?, `rollover_type`? |
+| `create_transaction_rule` | Create a new transaction auto-categorization rule | `merchant_criteria_operator`?, `merchant_criteria_value`?, `merchant_criteria_values`?, `merchant_criteria`?, `original_statement_operator`?, `original_statement_values`?, `original_statement_criteria`?, `use_original_statement`?, `amount_operator`?, `amount_value`?, `amount_lower`?, `amount_upper`?, `amount_is_expense`?, `set_category_id`?, `set_merchant_name`?, `add_tag_ids`?, `link_goal_id`?, `hide_from_reports`?, `review_status`?, `account_ids`?, `category_ids`?, `apply_to_existing`? |
+| `create_transaction_tag` | Create a new transaction tag | `name`, `color` |
+| `debug_session_loading` | Diagnose session loading problems | None |
+| `delete_transaction` | Delete a transaction from Monarch Money | `transaction_id` |
+| `delete_transaction_rule` | Delete a transaction rule | `rule_id` |
+| `get_account_balance_history` | Get historical balance data for a specific account | `account_id` |
+| `get_account_holdings` | Get investment holdings for a specific account | `account_id` |
+| `get_accounts` | Get all financial accounts from Monarch Money | None |
+| `get_budgets` | Get budget information from Monarch Money | `start_date`?, `end_date`? |
+| `get_cashflow` | Get cashflow analysis from Monarch Money | `start_date`?, `end_date`? |
+| `get_cashflow_by_month` | Get spending trends over time, broken down by category and month | `start_date`, `end_date` |
+| `get_category_details` | Get a single category's details including budget amounts for a month | `category_id`, `month`? |
+| `get_merchant` | Get a merchant's details including recurring transaction stream configuration | `merchant_id` |
+| `get_net_worth` | Get net worth history over time | `start_date`?, `end_date`?, `account_type`? |
+| `get_net_worth_by_account_type` | Get net worth breakdown by account type over time | `start_date`, `timeframe`? |
+| `get_recurring_transactions` | Get upcoming recurring transactions | `start_date`?, `end_date`? |
+| `get_spending_summary` | Get a spending summary broken down by category, category group, and merchant | `start_date`?, `end_date`? |
+| `get_transaction_categories` | Get all available transaction categories from Monarch Money | None |
+| `get_transaction_category_groups` | Get all transaction category groups (parent groupings for categories) | None |
+| `get_transaction_details` | Get full details for a specific transaction | `transaction_id` |
+| `get_transaction_rules` | Get all transaction auto-categorization rules from Monarch Money | None |
+| `get_transaction_splits` | Get the splits for a transaction | `transaction_id` |
+| `get_transaction_tags` | Get all available transaction tags from Monarch Money | None |
+| `get_transactions` | Get transactions from Monarch Money | `limit`?, `offset`?, `start_date`?, `end_date`?, `account_id`?, `search`?, `category_ids`?, `category_group_ids`?, `account_ids`?, `tag_ids`?, `has_notes`?, `is_split`?, `is_recurring`?, `wide_search`?, `search_scan_limit`? |
+| `get_transactions_needing_review` | Get transactions that need review based on various criteria | `needs_review`?, `days`?, `uncategorized_only`?, `without_notes_only`?, `limit`?, `offset`?, `account_id`? |
+| `get_transactions_summary` | Get a high-level summary of transactions | None |
+| `mark_transaction_reviewed` | Mark a transaction as reviewed (clears the needs_review flag) | `transaction_id` |
+| `monarch_login` | Sign in via a secure form in the client UI | None |
+| `monarch_login_with_token` | Sign in with a browser copied session token | None |
+| `monarch_logout` | Clear the stored session and drop the cached client | None |
+| `refresh_accounts` | Request account data refresh from financial institutions | `account_ids`? |
+| `review_recurring_stream` | Set the review status of a recurring transaction stream | `stream_id`, `review_status` |
+| `search_transactions` | Search and filter transactions with comprehensive filtering options | `search`?, `limit`?, `offset`?, `start_date`?, `end_date`?, `category_ids`?, `account_ids`?, `tag_ids`?, `has_attachments`?, `has_notes`?, `hidden_from_reports`?, `is_split`?, `is_recurring`? |
+| `set_budget_amount` | Set or update a budget amount for a category or category group | `amount`, `category_id`?, `category_group_id`?, `start_date`?, `apply_to_future`? |
 | `set_transaction_tags` | Set tags on a transaction | `transaction_id`, `tag_ids` |
-| `create_tag` | Create a new tag | `name`, `color` |
-| `search_transactions` | Search transactions with filters | `search`, `category_ids`, `account_ids`, `tag_ids`, `start_date`, `end_date`, `min_amount`, `max_amount` |
-| `get_transaction_details` | Get details of a transaction | `transaction_id` |
-| `delete_transaction` | Delete a transaction | `transaction_id` |
-| `get_recurring_transactions` | Get recurring transactions | None |
-| `get_transaction_rules` | List auto-categorization rules | None |
-| `create_transaction_rule` | Create an auto-categorization rule | `merchant_criteria_operator`, `merchant_criteria_value`, `set_category_id`, `add_tag_ids`, `amount_operator`, `amount_value` |
-| `update_transaction_rule` | Update an existing rule | `rule_id`, `merchant_criteria_operator`, `merchant_criteria_value`, `set_category_id` |
-| `delete_transaction_rule` | Delete a rule | `rule_id` |
-| `get_merchant` | Get merchant details with recurring stream | `merchant_id` |
-| `update_merchant` | Update merchant name/recurring stream | `merchant_id`, `name`, `is_recurring`, `frequency`, `base_date`, `amount`, `is_active` |
-| `review_recurring_stream` | Set recurring stream review status | `stream_id`, `review_status` |
-| `get_transaction_splits` | Get splits for a transaction | `transaction_id` |
-| `split_transaction` | Split a transaction into parts | `transaction_id`, `splits` (JSON array) |
-| `get_transactions_summary` | Get high-level transaction statistics | None |
-| `get_spending_summary` | Get spending breakdown by category | `start_date`, `end_date`, `limit` |
+| `setup_authentication` | Get setup instructions | None |
+| `split_transaction` | Split a transaction into multiple parts with different categories/merchants | `transaction_id`, `splits` |
+| `update_category` | Update an existing category's settings | `category_id`, `name`?, `icon`?, `group_id`?, `category_type`?, `exclude_from_budget`?, `budget_variability`?, `rollover_enabled`?, `rollover_start_month`?, `rollover_starting_balance`?, `rollover_frequency`?, `rollover_target_amount`?, `rollover_type`?, `confirm_rollover_reset`?, `dry_run`? |
+| `update_merchant` | Update a merchant's name and/or recurring transaction stream settings | `merchant_id`, `name`?, `is_recurring`?, `frequency`?, `base_date`?, `amount`?, `is_active`? |
+| `update_transaction` | Update an existing transaction in Monarch Money | `transaction_id`, `category_id`?, `merchant_name`?, `goal_id`?, `amount`?, `date`?, `hide_from_reports`?, `needs_review`?, `notes`? |
+| `update_transaction_notes` | Update the notes/memo for a transaction | `transaction_id`, `notes`, `receipt_url`? |
+| `update_transaction_rule` | Update an existing transaction rule | `rule_id`, `merchant_criteria_operator`?, `merchant_criteria_value`?, `merchant_criteria_values`?, `merchant_criteria`?, `original_statement_operator`?, `original_statement_values`?, `original_statement_criteria`?, `use_original_statement`?, `amount_operator`?, `amount_value`?, `amount_lower`?, `amount_upper`?, `amount_is_expense`?, `set_category_id`?, `set_merchant_name`?, `add_tag_ids`?, `link_goal_id`?, `hide_from_reports`?, `review_status`?, `account_ids`?, `category_ids`?, `clear_category`?, `clear_merchant`?, `clear_tags`?, `clear_goal_link`?, `clear_review_status`?, `apply_to_existing`? |
+| `upload_account_balance_history` | Upload corrected balance snapshots for an account | `account_id`, `corrections`, `dry_run`? |
 
 ## 📝 Usage Examples
 
@@ -372,7 +386,7 @@ Get my cashflow for the last 3 months using get_cashflow
 
 ### List Available Categories
 ```
-Show me all available categories using get_categories
+Show me all available categories using get_transaction_categories
 ```
 
 ### Review Uncategorized Transactions
@@ -392,7 +406,7 @@ Add the "Tax Deductible" tag to this transaction using set_transaction_tags
 
 ### Search for Transactions
 ```
-Find all Amazon transactions over $50 from the last month using search_transactions
+Find all Amazon transactions from the last month using search_transactions
 ```
 
 ### View Recurring Bills
@@ -504,11 +518,27 @@ monarch-mcp-server/
 
 ### Recommended: require approval for mutating tools
 
-Several tools mutate your Monarch ledger (`create_transaction`, `update_transaction`, `delete_transaction`, `bulk_categorize_transactions`, `upload_account_balance_history`, `set_transaction_tags`, `create_transaction_rule`, `update_transaction_rule`, `delete_transaction_rule`, `split_transaction`, `set_budget_amount`, `update_merchant`, `review_recurring_stream`).
+These tools mutate your Monarch data. The list is every registered tool that writes, checked against the source rather than maintained by hand:
+
+**Transactions**: `create_transaction`, `update_transaction`, `delete_transaction`, `categorize_transaction`, `update_transaction_notes`, `mark_transaction_reviewed`, `bulk_categorize_transactions`, `split_transaction`, `upload_account_balance_history`
+
+**Tags**: `set_transaction_tags`, `add_transaction_tag`, `create_transaction_tag`
+
+**Rules**: `create_transaction_rule`, `update_transaction_rule`, `delete_transaction_rule`
+
+**Categories and budgets**: `create_transaction_category`, `update_category`, `set_budget_amount`
+
+**Merchants**: `update_merchant`, `review_recurring_stream`
+
+**Session**: `monarch_login`, `monarch_login_with_token`, `monarch_logout`
+
+`refresh_accounts` is side effecting too, since it posts a refresh request to your institutions, though it does not change your ledger.
 
 Because the LLM can be influenced by data it reads back (a malicious-looking memo or merchant name in a transaction), the safest setup is to configure your MCP client to require manual approval before any mutating tool runs. In Claude Desktop and Claude Code this is the default behavior for unknown tools; keep it that way for the tools listed above rather than allow-listing them.
 
-`bulk_categorize_transactions` and `upload_account_balance_history` also accept a `dry_run=True` argument that returns the planned changes without executing them, useful for previewing a bulk action before approving it.
+`bulk_categorize_transactions`, `upload_account_balance_history` and `update_category` accept a `dry_run=True` argument that returns the planned changes without executing them, useful for previewing before approving.
+
+`update_category` additionally requires `confirm_rollover_reset=True` before `rollover_start_month` or `rollover_starting_balance` will be applied. Those two restart a category's rollover period and discard the balance accumulated in it, which cannot be undone, so they cannot ride along unnoticed in a call that otherwise reads like a rename.
 
 ## 🙏 Acknowledgments
 
