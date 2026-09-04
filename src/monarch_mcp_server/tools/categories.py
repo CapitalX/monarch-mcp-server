@@ -228,6 +228,7 @@ async def update_category(
     rollover_frequency: Optional[str] = None,
     rollover_target_amount: Optional[float] = None,
     rollover_type: Optional[str] = None,
+    confirm_rollover_reset: bool = False,
     dry_run: bool = False,
 ) -> str:
     """
@@ -256,6 +257,12 @@ async def update_category(
             "variable".
         rollover_target_amount: Target amount for rollover savings goal.
         rollover_type: Rollover type. Values: "monthly".
+        confirm_rollover_reset: Required opt in for rollover_start_month and
+            rollover_starting_balance. Those two restart the category's
+            rollover period, discarding a balance that accumulated over months
+            or years, and there is no undo. Every other argument here is a
+            routine edit, so the destructive pair must be asked for explicitly
+            rather than riding along in a call that reads like a rename.
         dry_run: If True, return the planned changes without executing the
             mutation. Shows current vs proposed values.
 
@@ -293,6 +300,29 @@ async def update_category(
                     "message": (
                         f"Invalid budget_variability: {budget_variability!r}. "
                         f"Must be one of: {sorted(_VALID_BUDGET_VARIABILITY)}"
+                    ),
+                }
+            )
+
+        resets_rollover = [
+            arg
+            for arg, value in (
+                ("rollover_start_month", rollover_start_month),
+                ("rollover_starting_balance", rollover_starting_balance),
+            )
+            if value is not None
+        ]
+        if resets_rollover and not confirm_rollover_reset:
+            return json_success(
+                {
+                    "success": False,
+                    "message": (
+                        f"{' and '.join(resets_rollover)} restarts this "
+                        "category's rollover period and discards the balance "
+                        "accumulated so far, which cannot be undone. Pass "
+                        "confirm_rollover_reset=True to proceed, or use "
+                        "dry_run=True to preview. Renames, icons, group moves "
+                        "and budget variability do not need it."
                     ),
                 }
             )

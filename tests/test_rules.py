@@ -715,3 +715,85 @@ class TestDeleteTransactionRule:
         data = json.loads(result)
         assert data["success"] is True
         assert "deleted" in data["message"].lower()
+
+
+class TestAmountCriterionIsNeverSilentlyDropped:
+    """A rule is standing policy, so a lost criterion is not a small thing.
+
+    The amount criterion was built behind a two part guard and omitted
+    entirely when only one half was supplied, with the tool still reporting
+    that the rule was created.
+    """
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_value_without_operator_is_rejected(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await create_transaction_rule(
+                merchant_criteria_value="Costco",
+                amount_value=500.0,
+                set_category_id="cat_travel",
+                apply_to_existing=True,
+            )
+        )
+
+        assert result.get("error") or result.get("success") is False
+        assert "amount_operator" in json.dumps(result)
+        # Nothing may reach the API: the rule would match every Costco
+        # transaction and apply_to_existing rewrites history immediately.
+        mock_client.gql_call.assert_not_called()
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_operator_without_value_is_rejected(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await create_transaction_rule(
+                merchant_criteria_value="Costco",
+                amount_operator="gt",
+                set_category_id="cat_travel",
+            )
+        )
+
+        assert result.get("error") or result.get("success") is False
+        mock_client.gql_call.assert_not_called()
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_both_halves_together_still_work(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "createTransactionRuleV2": {"errors": None, "transactionRule": {"id": "r1"}}
+        }
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await create_transaction_rule(
+                merchant_criteria_value="Costco",
+                amount_operator="gt",
+                amount_value=500.0,
+                set_category_id="cat_travel",
+            )
+        )
+
+        assert result["success"] is True
+        sent = mock_client.gql_call.call_args.kwargs["variables"]["input"]
+        assert sent["amountCriteria"]["operator"] == "gt"
+        assert sent["amountCriteria"]["value"] == 500.0
+
+    @patch("monarch_mcp_server.tools.rules.get_monarch_client")
+    async def test_no_amount_arguments_at_all_is_fine(self, mock_get_client):
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "createTransactionRuleV2": {"errors": None, "transactionRule": {"id": "r1"}}
+        }
+        mock_get_client.return_value = mock_client
+
+        result = json.loads(
+            await create_transaction_rule(
+                merchant_criteria_value="Costco", set_category_id="cat_x"
+            )
+        )
+        assert result["success"] is True

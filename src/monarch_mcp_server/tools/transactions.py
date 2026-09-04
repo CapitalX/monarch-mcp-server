@@ -16,6 +16,8 @@ from monarch_mcp_server.helpers import (
     format_exception,
     format_transaction,
     json_error,
+    json_rejected,
+    payload_errors,
     json_success,
     tool_response_envelope,
 )
@@ -715,6 +717,9 @@ async def update_transaction(
             update_data["notes"] = notes
 
         result = await client.update_transaction(**update_data)
+        errors = payload_errors(result, "updateTransaction")
+        if errors:
+            return json_rejected("update_transaction", errors)
         return json_success(result)
     except Exception as e:
         return json_error("update_transaction", e)
@@ -734,6 +739,9 @@ async def categorize_transaction(transaction_id: str, category_id: str) -> str:
         result = await client.update_transaction(
             transaction_id=transaction_id, category_id=category_id
         )
+        errors = payload_errors(result, "updateTransaction")
+        if errors:
+            return json_rejected("categorize_transaction", errors)
         return json_success(result)
     except Exception as e:
         return json_error("categorize_transaction", e)
@@ -771,6 +779,9 @@ async def update_transaction_notes(
             transaction_id=transaction_id,
             notes=formatted_notes,
         )
+        errors = payload_errors(result, "updateTransaction")
+        if errors:
+            return json_rejected("update_transaction_notes", errors)
         return json_success(result)
     except Exception as e:
         return json_error("update_transaction_notes", e)
@@ -795,6 +806,9 @@ async def mark_transaction_reviewed(transaction_id: str) -> str:
             transaction_id=transaction_id,
             needs_review=False,
         )
+        errors = payload_errors(result, "updateTransaction")
+        if errors:
+            return json_rejected("mark_transaction_reviewed", errors)
         return json_success(result)
     except Exception as e:
         return json_error("mark_transaction_reviewed", e)
@@ -842,14 +856,17 @@ async def bulk_categorize_transactions(
             "errors": [],
         }
 
-        async def _update_one(txn_id: str) -> None:
+        async def _update_one(txn_id: str) -> Any:
             update_params: Dict[str, Any] = {
                 "transaction_id": txn_id,
                 "category_id": category_id,
             }
             if mark_reviewed:
                 update_params["needs_review"] = False
-            await client.update_transaction(**update_params)
+            # Returned, not discarded: Monarch refuses a write by putting
+            # errors in the payload of an HTTP 200, so the absence of an
+            # exception says nothing about whether anything was written.
+            return await client.update_transaction(**update_params)
 
         # Use asyncio.gather for concurrent updates
         tasks = [_update_one(txn_id) for txn_id in transaction_ids]
@@ -861,11 +878,20 @@ async def bulk_categorize_transactions(
                 results["errors"].append(
                     {
                         "transaction_id": txn_id,
-                        "error": str(outcome),
+                        "error": format_exception(outcome),
                     }
                 )
-            else:
-                results["successful"] += 1
+                continue
+
+            errors = payload_errors(outcome, "updateTransaction")
+            if errors:
+                results["failed"] += 1
+                results["errors"].append(
+                    {"transaction_id": txn_id, "error": errors}
+                )
+                continue
+
+            results["successful"] += 1
 
         return json_success(results)
     except Exception as e:
@@ -888,6 +914,9 @@ async def delete_transaction(transaction_id: str) -> str:
     try:
         client = await get_monarch_client()
         result = await client.delete_transaction(transaction_id=transaction_id)
+        errors = payload_errors(result, "deleteTransaction")
+        if errors:
+            return json_rejected("delete_transaction", errors)
         return json_success(result)
     except Exception as e:
         return json_error("delete_transaction", e)
