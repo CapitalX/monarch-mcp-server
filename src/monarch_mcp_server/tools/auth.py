@@ -3,7 +3,10 @@
 import logging
 import os
 
-from mcp.server.fastmcp import Context
+try:  # mcp >= 2.0
+    from mcp.server.mcpserver import Context
+except ImportError:  # mcp < 2.0
+    from mcp.server.fastmcp import Context
 
 from monarch_mcp_server import auth
 from monarch_mcp_server.app import mcp
