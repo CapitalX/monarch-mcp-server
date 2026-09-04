@@ -49,13 +49,9 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
          "command": "/opt/homebrew/bin/uv",
          "args": [
            "run",
-           "--with",
-           "mcp[cli]",
-           "--with-editable",
+           "--project",
            "/path/to/your/monarch-mcp-server",
-           "mcp",
-           "run",
-           "/path/to/your/monarch-mcp-server/src/monarch_mcp_server/server.py"
+           "monarch-mcp-server"
          ]
        }
      }
@@ -63,6 +59,15 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
    ```
 
    **Important**: Replace `/path/to/your/monarch-mcp-server` with your actual path!
+
+   `uv run --project` resolves dependencies from the repo's `uv.lock`, and
+   `monarch-mcp-server` is the console script declared in `pyproject.toml`.
+   Earlier versions of this README used `uv run --with 'mcp[cli]'`, which
+   builds a fresh unpinned environment on every launch and silently picks up
+   whatever the newest release happens to be. That is what broke every install
+   when the MCP SDK published 2.0, and the client only reported it as the
+   server disconnecting. Pinning the launch to the lockfile means a new
+   upstream release cannot change what your server runs.
 
 4. **Restart Claude Desktop**
 
@@ -84,13 +89,9 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
          "command": "/opt/homebrew/bin/uv",
          "args": [
            "run",
-           "--with",
-           "mcp[cli]",
-           "--with-editable",
+           "--project",
            "/path/to/your/monarch-mcp-server",
-           "mcp",
-           "run",
-           "/path/to/your/monarch-mcp-server/src/monarch_mcp_server/server.py"
+           "monarch-mcp-server"
          ]
        }
      }
@@ -107,13 +108,9 @@ My MonarchMoney referral: https://www.monarchmoney.com/referral/ufmn0r83yf?r_sou
        "command": "/opt/homebrew/bin/uv",
        "args": [
          "run",
-         "--with",
-         "mcp[cli]",
-         "--with-editable",
+         "--project",
          "/path/to/your/monarch-mcp-server",
-         "mcp",
-         "run",
-         "/path/to/your/monarch-mcp-server/src/monarch_mcp_server/server.py"
+         "monarch-mcp-server"
        ]
      }
    }
