@@ -13,6 +13,7 @@ except ImportError:  # mcp < 2.0
 from monarchmoney import MonarchMoney, RequireMFAException
 from pydantic import BaseModel, Field
 
+from monarch_mcp_server.client import clear_client_cache
 from monarch_mcp_server.secure_session import secure_session
 
 
@@ -93,6 +94,11 @@ async def login_interactive(ctx: Context) -> str:
         )
 
     secure_session.save_authenticated_session(mm)
+    # The module level client cache holds its own Authorization header and is
+    # unaffected by what storage now contains. Without this, a re-login after a
+    # session expires reports success while every subsequent call keeps using
+    # the dead client, and the only fix is restarting the host process.
+    clear_client_cache()
     return "Logged in. Session saved to system keyring."
 
 
@@ -117,9 +123,14 @@ async def login_with_token_interactive(ctx: Context) -> str:
     mm = MonarchMoney(token=token)
     await mm.get_subscription_details()
     secure_session.save_token(token)
+    clear_client_cache()
     return "Session token saved to system keyring."
 
 
 async def logout() -> str:
     secure_session.delete_token()
+    # Deleting the stored session is not enough. A cached client keeps its own
+    # Authorization header, so without dropping the cache every tool call after
+    # a logout still returns live financial data for the life of the process.
+    clear_client_cache()
     return "Cleared stored Monarch session."
